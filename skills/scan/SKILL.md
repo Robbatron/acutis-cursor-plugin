@@ -5,7 +5,7 @@ description: Verify AI-generated code with Acutis PCST contracts. Use after writ
 
 # Security Scan with Acutis
 
-Call `mcp__acutis__scan_code` with the generated code and a PCST contract. The hook may remind you after file edits, but the responsibility is: **scan security-relevant generated code before finishing, and continue until the decision is `ALLOW`**.
+Call the Acutis `scan_code` MCP tool with the generated code and a PCST contract. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). The hook may remind you after file edits, but the responsibility is: **scan security-relevant generated code before finishing, and continue until the decision is `ALLOW`**.
 
 ## Workflow
 

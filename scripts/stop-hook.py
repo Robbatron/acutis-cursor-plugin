@@ -256,8 +256,8 @@ def main() -> None:
     message = (
         f"Security-relevant code was written but not yet verified. "
         f"Files needing verification: {names}. "
-        f"Call mcp__acutis__scan_code with the code and a PCST contract. "
-        f"Fix any BLOCK results before completing."
+        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
+        f"with the code and a PCST contract. Fix any BLOCK results before completing."
     )
 
     if env == "vscode":

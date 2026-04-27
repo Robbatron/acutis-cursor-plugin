@@ -84,9 +84,9 @@ def build_reminder(file_path: str) -> str:
     filename = Path(file_path).name
     return (
         f"ACUTIS: You just wrote {filename} — this is a security-relevant file. "
-        f"Call scan_code with the code and a PCST contract declaring sources, "
-        f"sinks, and transforms. The stop hook will block if unverified code "
-        f"exists when you finish."
+        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
+        f"with the code and a PCST contract declaring sources, sinks, and transforms. "
+        f"The stop hook will block if unverified code exists when you finish."
     )
 
 
