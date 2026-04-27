@@ -1,0 +1,19 @@
+---
+description: Acutis security verification — automatically scan security-relevant code before completing
+alwaysApply: true
+---
+
+When you write or edit files with security-relevant extensions (.py, .js, .ts, .jsx, .tsx, .html), you MUST verify the code using the `scan_code` MCP tool before finishing.
+
+After each security-relevant write, you will receive a reminder from Acutis.
+Do NOT ignore it. The stop hook will block completion if unverified code exists.
+When the reminder appears, immediately use the Acutis scan skill (`skills/scan/SKILL.md`) to build the PCST contract and reason through the witness path before calling `scan_code`.
+
+Call `mcp__acutis__scan_code` with:
+- `code`: the source code as a string
+- `language`: "python" or "javascript"
+- `contract`: a PCST contract declaring sources, sinks, and transforms
+
+If the result is BLOCK_VIOLATION, fix the code and scan again. If BLOCK_INCOMPLETE, use the scan skill's troubleshooting guidance: add missing semantic coverage, use SafeOutput only for non-interpreting helpers, and reshape hidden flows so Acutis can infer witnesses. Only proceed when the result is ALLOW.
+
+Do not weaken contracts to get ALLOW. Acutis verifies AI-generated code output, not whole files or repositories.

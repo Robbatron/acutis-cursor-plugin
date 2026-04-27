@@ -1,0 +1,15 @@
+{
+  "name": "acutis",
+  "displayName": "Acutis",
+  "version": "1.0.0",
+  "description": "Formal verification for AI-generated code — catches 10 of the CWE Top 25 with mathematical proof.",
+  "author": {
+    "name": "Robert Delfs"
+  },
+  "homepage": "https://acutis.dev",
+  "repository": "https://github.com/Robbatron/acutis-cursor-plugin",
+  "license": "MIT",
+  "keywords": ["security", "verification", "cwe-top-25", "xss", "sql-injection", "mcp", "zero-trust"],
+  "rules": "rules/",
+  "skills": "skills/"
+}

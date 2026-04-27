@@ -1,0 +1,26 @@
+{
+  "name": "acutis-cursor-plugin",
+  "owner": {
+    "name": "Robert Delfs",
+    "email": "robbatron@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "Acutis — Formal verification for AI-generated code. Catches 10 of the CWE Top 25 with mathematical proof."
+  },
+  "plugins": [
+    {
+      "name": "acutis",
+      "source": ".",
+      "description": "Formal verification for AI-generated code — catches 10 of the CWE Top 25 with mathematical proof.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Robert Delfs"
+      },
+      "homepage": "https://acutis.dev",
+      "repository": "https://github.com/Robbatron/acutis-cursor-plugin",
+      "license": "MIT",
+      "keywords": ["security", "verification", "cwe-top-25", "xss", "sql-injection", "mcp", "zero-trust"],
+      "category": "security"
+    }
+  ]
+}

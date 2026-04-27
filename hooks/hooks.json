@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./scripts/session-start.sh",
+        "timeout": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "./scripts/post-tool-use.sh",
+        "timeout": 5
+      }
+    ],
+    "stop": [
+      {
+        "command": "./scripts/stop-hook.sh",
+        "timeout": 60,
+        "loop_limit": 10
+      }
+    ]
+  }
+}
