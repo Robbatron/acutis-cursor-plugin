@@ -1,11 +1,11 @@
 ---
 name: scan
-description: Verify AI-generated code with Acutis PCST contracts. Use after writing or editing security-relevant code, when an Acutis hook reminds you to scan, or when scan_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, and deserialization.
+description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to scan, or when scan_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, and deserialization.
 ---
 
 # Security Scan with Acutis
 
-Call the Acutis `scan_code` MCP tool with the generated code and a PCST contract. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). The hook may remind you after file edits, but the responsibility is: **scan security-relevant generated code before finishing, and continue until the decision is `ALLOW`**.
+Call the Acutis `scan_code` MCP tool with your proposed code output and a PCST contract **before showing the code in chat or writing it to a file**. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The PostToolUse hook fires after a write as a fallback nudge, but the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
 
 ## Workflow
 
