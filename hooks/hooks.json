@@ -7,9 +7,19 @@
         "timeout": 5
       }
     ],
+    "afterFileEdit": [
+      {
+        "command": "./scripts/after-file-edit.sh",
+        "timeout": 5
+      }
+    ],
     "postToolUse": [
       {
         "command": "./scripts/post-tool-use.sh",
+        "timeout": 5
+      },
+      {
+        "command": "./scripts/scan-allow-tracker.sh",
         "timeout": 5
       }
     ],

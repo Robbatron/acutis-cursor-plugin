@@ -1,9 +1,7 @@
 {
   "mcpServers": {
     "acutis": {
-      "type": "http",
-      "url": "https://mcp.acutis.dev/mcp",
-      "alwaysLoad": true
+      "url": "https://mcp.acutis.dev/mcp"
     }
   }
 }

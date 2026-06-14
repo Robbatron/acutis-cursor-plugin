@@ -1,69 +1,63 @@
 #!/usr/bin/env python3
 """
-Acutis Stop Hook — works in Claude Code, VS Code, and Cursor.
+Acutis Stop hook (Cursor) — re-prompts the agent if it wrote security-relevant
+code that has not been verified via scan_code.
 
-Safety net: blocks the agent from completing if it wrote security-relevant code
-that hasn't been verified via scan_code. If the agent already called scan_code
-and got ALLOW after its last edit, the hook is invisible.
+Cursor's `stop` hook cannot hard-block; it can only emit `followup_message`,
+which auto-submits a new turn (bounded by `loop_limit` in hooks.json). This hook
+uses that to ask the agent to verify, looping until the work is scanned.
 
-The hook does NOT invoke Acutis directly — it only reads the transcript to
-determine whether scan_code was called. The agent calls scan_code via MCP.
+Verification state comes from /tmp/acutis-unverified.json, maintained by
+after-file-edit.py (records writes) and scan-allow-tracker.py (clears on ALLOW).
+The state file is used instead of the conversation transcript because Cursor's
+transcript_path can be null (transcripts disabled) and its format is
+undocumented — relying on it would let enforcement silently fail open.
 
-Environment detection:
-  - Claude Code: hook_input has "stop_hook_active" key; output {"decision": "block"}
-  - VS Code: hook_input has "hookEventName" key; output {"hookSpecificOutput": {"decision": "block"}}
-  - Cursor: hook_input has "hook_event_name" key; output {"followup_message": "..."}
-
-Hook protocol (both environments):
-  - stdin: JSON with transcript_path, etc.
-  - stdout: JSON response
-  - exit 0: allow (parse stdout for JSON)
-  - exit 2: blocking error
+If the remote Acutis MCP server is unreachable, the hook fails open (allows the
+stop with a warning) rather than deadlocking the agent, since it could not scan.
 """
 
 import json
-import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+# Shared state file written by after-file-edit.py / cleared by scan-allow-tracker.py.
+STATE_FILE = "/tmp/acutis-unverified.json"
 
-SECURITY_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx",
-    ".html", ".htm", ".mjs", ".cjs",
-}
-
-SKIP_PATTERNS = {
-    "node_modules", "__pycache__", ".git", "venv", ".venv",
-    "package-lock.json", "yarn.lock", "poetry.lock",
-}
-
-WRITE_TOOLS = {
-    "Write", "Edit", "write", "edit",          # Claude Code
-    "editFiles", "createFile",                      # Cursor
-    "create_file", "replace_string_in_file",         # VS Code Copilot
-    "multi_replace_string_in_file", "edit_file",     # VS Code Copilot
-}
-
-# Substring match — plugin namespacing can prefix tool names
-# (e.g. "plugin:acutis:mcp__acutis__scan_code")
-SCAN_TOOL_KEYWORD = "scan_code"
-
-# MCP server health check
-MCP_HEALTH_URL = os.environ.get("ACUTIS_MCP_URL", "https://mcp.acutis.dev") + "/health"
+# Hosted Acutis MCP server health endpoint. Hardcoded (not env- or input-derived)
+# so the health check carries no user-controlled URL — this hook has no SSRF flow.
+MCP_HEALTH_URL = "https://mcp.acutis.dev/health"
 MCP_HEALTH_TIMEOUT = 3  # seconds
+
+# Stop re-prompting after this many loops as a backstop (hooks.json also caps via loop_limit).
+MAX_LOOPS = 3
+
+
+def read_hook_input() -> dict:
+    try:
+        raw = sys.stdin.read()
+        return json.loads(raw) if raw.strip() else {}
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def read_state() -> tuple:
+    """Return (pending, all) from the state file, or ([], []) if absent/unreadable."""
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            return [], []
+        return state.get("pending", []), state.get("all", [])
+    except (FileNotFoundError, json.JSONDecodeError, IOError):
+        return [], []
 
 
 def check_mcp_health() -> bool:
-    """Check if the Acutis MCP server is reachable.
-
-    Returns True if reachable, False otherwise. Fails open: if we can't
-    reach the server, we allow the stop rather than deadlocking the agent.
-    """
+    """True if the Acutis MCP server is reachable. Fails open (returns True on
+    error is the caller's choice) — here we just report reachability."""
     try:
         req = urllib.request.Request(MCP_HEALTH_URL, method="GET")
         with urllib.request.urlopen(req, timeout=MCP_HEALTH_TIMEOUT):
@@ -72,211 +66,40 @@ def check_mcp_health() -> bool:
         return False
 
 
-def detect_environment(hook_input: dict) -> str:
-    """Detect whether we're running in Claude Code, VS Code, or Cursor.
-
-    Claude Code sends: stop_hook_active, session_id
-    VS Code sends: hookEventName (PascalCase), sessionId
-    Cursor sends: hook_event_name, cursor_version, conversation_id
-    """
-    if "hookEventName" in hook_input:
-        return "vscode"
-    if "hook_event_name" in hook_input or "cursor_version" in hook_input:
-        return "cursor"
-    return "claude"
-
-
-def read_hook_input() -> dict:
-    """Read the JSON hook input from stdin."""
-    try:
-        raw = sys.stdin.read()
-        if not raw.strip():
-            return {}
-        return json.loads(raw)
-    except (json.JSONDecodeError, IOError):
-        return {}
-
-
-def is_security_relevant(file_path: str) -> bool:
-    """Check if a file path is security-relevant based on extension."""
-    p = Path(file_path)
-    if p.suffix.lower() not in SECURITY_EXTENSIONS:
-        return False
-    if set(p.parts) & SKIP_PATTERNS:
-        return False
-    return True
-
-
-def analyze_transcript(transcript_path: str) -> tuple:
-    """Walk the transcript and determine verification state.
-
-    Returns (unverified_files, all_security_files):
-      - all_security_files: list of all security-relevant files written
-      - unverified_files: files written since the last scan_code ALLOW
-    """
-    if not transcript_path or not os.path.isfile(transcript_path):
-        return [], []
-
-    all_security_files: list[str] = []
-    files_since_last_allow: list[str] = []
-
-    try:
-        with open(transcript_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                writes, allow, written_paths = _analyze_entry(entry)
-                if writes:
-                    for fp in written_paths:
-                        if fp not in all_security_files:
-                            all_security_files.append(fp)
-                        if fp not in files_since_last_allow:
-                            files_since_last_allow.append(fp)
-                if allow:
-                    files_since_last_allow.clear()
-    except (IOError, PermissionError):
-        pass
-
-    return files_since_last_allow, all_security_files
-
-
-def _analyze_entry(entry, _depth=0) -> tuple:
-    """Check a transcript entry for security-relevant writes and scan ALLOWs.
-
-    Returns (has_security_write, has_scan_allow, written_paths).
-    """
-    if _depth > 10:
-        return False, False, []
-
-    has_write = False
-    has_allow = False
-    written_paths: list[str] = []
-
-    if isinstance(entry, dict):
-        # Check for Write/Edit tool_use
-        if entry.get("type") == "tool_use" and entry.get("name") in WRITE_TOOLS:
-            tool_input = entry.get("input", entry.get("tool_input", {}))
-            fp = tool_input.get("file_path", tool_input.get("filePath", ""))
-            if fp and is_security_relevant(fp):
-                has_write = True
-                written_paths.append(fp)
-
-        if entry.get("tool_name") in WRITE_TOOLS:
-            tool_input = entry.get("tool_input", {})
-            fp = tool_input.get("file_path", tool_input.get("filePath", ""))
-            if fp and is_security_relevant(fp):
-                has_write = True
-                written_paths.append(fp)
-
-        # Check for scan_code tool_result with ALLOW
-        # Use substring match: plugin namespacing prefixes tool names
-        entry_name = str(entry.get("name", ""))
-        entry_tool_name = str(entry.get("tool_name", ""))
-        is_scan_result = (
-            entry.get("type") == "tool_result"
-            and SCAN_TOOL_KEYWORD in entry_name
-        )
-        if is_scan_result:
-            content = entry.get("content", "")
-            if isinstance(content, str) and "ALLOW" in content:
-                has_allow = True
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and "ALLOW" in str(item.get("text", "")):
-                        has_allow = True
-
-        # Also check for scan_code in tool_name + result patterns
-        if SCAN_TOOL_KEYWORD in entry_tool_name:
-            result = entry.get("result", entry.get("tool_result", ""))
-            if isinstance(result, str) and "ALLOW" in result:
-                has_allow = True
-            elif isinstance(result, dict) and "ALLOW" in str(result.get("decision", "")):
-                has_allow = True
-
-        # Recurse into nested structures
-        for key in ("content", "messages", "message"):
-            val = entry.get(key)
-            if isinstance(val, (dict, list)):
-                w, a, paths = _analyze_entry(val, _depth + 1)
-                has_write = has_write or w
-                has_allow = has_allow or a
-                written_paths.extend(paths)
-
-    elif isinstance(entry, list):
-        for item in entry:
-            w, a, paths = _analyze_entry(item, _depth + 1)
-            has_write = has_write or w
-            has_allow = has_allow or a
-            written_paths.extend(paths)
-
-    return has_write, has_allow, written_paths
+def allow() -> None:
+    json.dump({}, sys.stdout)
+    sys.stdout.write("\n")
+    sys.exit(0)
 
 
 def main() -> None:
-    """Main hook entry point."""
     hook_input = read_hook_input()
-    env = detect_environment(hook_input)
 
-    # Guard: prevent infinite loops
-    # Claude Code: stop_hook_active flag
-    # Cursor: loop_count field (max 5 enforced by Cursor itself)
-    if hook_input.get("stop_hook_active", False):
-        sys.exit(0)
-    if hook_input.get("loop_count", 0) >= 3:
-        sys.exit(0)
+    # Loop guard: stop re-prompting after a few rounds.
+    if hook_input.get("loop_count", 0) >= MAX_LOOPS:
+        allow()
 
-    transcript_path = hook_input.get("transcript_path", "")
-    unverified_files, all_security_files = analyze_transcript(transcript_path)
+    pending, all_files = read_state()
+    if not all_files or not pending:
+        # Nothing security-relevant written, or everything already verified.
+        allow()
 
-    if not all_security_files or not unverified_files:
-        # No security-relevant code, or already verified — allow stop
-        sys.exit(0)
-
-    # Before blocking, check if the MCP server is reachable.
-    # If it's down, blocking would deadlock the agent (it can't scan).
-    # Fail open: warn but allow.
+    # Don't deadlock the agent if it cannot reach the server to scan.
     if not check_mcp_health():
-        # Server unreachable — allow stop with a warning on stderr
         print(
-            "Warning: Acutis MCP server is unreachable. "
-            "Skipping verification enforcement.",
+            "Warning: Acutis MCP server is unreachable. Skipping verification enforcement.",
             file=sys.stderr,
         )
-        sys.exit(0)
+        allow()
 
-    # Block: unverified security-relevant code exists
-    # Show just filenames, not full paths (cleaner for the agent)
-    names = ", ".join(Path(f).name for f in unverified_files)
+    names = ", ".join(Path(f).name for f in pending)
     message = (
         f"Security-relevant code was written but not yet verified. "
         f"Files needing verification: {names}. "
         f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
         f"with the code and a PCST contract. Fix any BLOCK results before completing."
     )
-
-    if env == "vscode":
-        # VS Code: hookSpecificOutput wrapper with decision/reason
-        response = {
-            "hookSpecificOutput": {
-                "hookEventName": "Stop",
-                "decision": "block",
-                "reason": message,
-            }
-        }
-    elif env == "cursor":
-        # Cursor: followup_message triggers a new turn
-        response = {"followup_message": message}
-    else:
-        # Claude Code: decision/reason blocks the stop
-        response = {"decision": "block", "reason": message}
-
-    json.dump(response, sys.stdout)
+    json.dump({"followup_message": message}, sys.stdout)
     sys.stdout.write("\n")
     sys.exit(0)
 
