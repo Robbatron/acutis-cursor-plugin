@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
 """
-Acutis PostToolUse Hook — fires after each Write/Edit to remind the agent
-to call scan_code for security-relevant files.
+Acutis PostToolUse hook (Cursor) — reminds the agent to call scan_code after a
+security-relevant file write.
 
-Works in Claude Code, Cursor, and VS Code.
+Cursor's postToolUse input provides `tool_name`, `tool_input`, `tool_output`,
+`tool_use_id`, `cwd`, `duration`, `model` — but not a top-level `file_path`, so
+the path (when present) is read out of `tool_input`. Output uses
+`additional_context`, the field postToolUse supports for context injection.
 
-Environment detection:
-  - Claude Code: default (no cursor_version or hookEventName keys)
-  - Cursor: hook_input has "cursor_version" or "hook_event_name" key
-  - VS Code: hook_input has "hookEventName" key
-
-Hook protocol:
-  - stdin: JSON with tool_name, tool_input, etc.
-  - stdout: JSON with additionalContext (non-blocking reminder)
-  - exit 0: always (PostToolUse is advisory, not blocking)
+This is a best-effort nudge; the load-bearing enforcement is the afterFileEdit
+hook (records state) plus the stop hook (re-prompts on unverified state).
 """
 
 import json
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Constants — keep in sync with stop-hook.py
-# ---------------------------------------------------------------------------
-
+# Keep in sync with after-file-edit.py / stop-hook.py
 SECURITY_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx",
     ".html", ".htm", ".mjs", ".cjs",
@@ -35,40 +28,20 @@ SKIP_PATTERNS = {
 }
 
 
-def detect_environment(hook_input: dict) -> str:
-    """Detect whether we're running in Claude Code, Cursor, or VS Code.
-
-    VS Code sends: hookEventName (PascalCase)
-    Cursor sends: hook_event_name, cursor_version
-    Claude Code: default
-    """
-    if "hookEventName" in hook_input:
-        return "vscode"
-    if "cursor_version" in hook_input or "hook_event_name" in hook_input:
-        return "cursor"
-    return "claude"
-
-
-def extract_file_path(hook_input: dict, env: str) -> str:
-    """Extract the file path from the hook input."""
-    # Cursor afterFileEdit provides file_path directly
-    if env == "cursor":
-        fp = hook_input.get("file_path", "")
-        if fp:
-            return fp
-
-    # Claude Code and VS Code: tool_input contains file_path
+def extract_file_path(hook_input: dict) -> str:
+    """Best-effort pull of the edited file path from a Cursor postToolUse event."""
     tool_input = hook_input.get("tool_input", {})
     if isinstance(tool_input, str):
         try:
             tool_input = json.loads(tool_input)
         except (json.JSONDecodeError, TypeError):
             return ""
-    return tool_input.get("file_path", tool_input.get("filePath", ""))
+    if not isinstance(tool_input, dict):
+        return ""
+    return tool_input.get("path", tool_input.get("file_path", tool_input.get("filePath", "")))
 
 
 def is_security_relevant(file_path: str) -> bool:
-    """Check if a file path is security-relevant based on extension."""
     if not file_path:
         return False
     p = Path(file_path)
@@ -79,50 +52,26 @@ def is_security_relevant(file_path: str) -> bool:
     return True
 
 
-def build_reminder(file_path: str) -> str:
-    """Build the reminder message."""
-    filename = Path(file_path).name
-    return (
-        f"ACUTIS: You just wrote {filename} — this is a security-relevant file. "
-        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
-        f"with the code and a PCST contract declaring sources, sinks, and transforms. "
-        f"The stop hook will block if unverified code exists when you finish."
-    )
-
-
 def main() -> None:
-    """Main hook entry point."""
     try:
-        raw = sys.stdin.read()
-        hook_input = json.loads(raw) if raw.strip() else {}
+        hook_input = json.loads(sys.stdin.read() or "{}")
     except (json.JSONDecodeError, IOError):
         hook_input = {}
 
-    env = detect_environment(hook_input)
-    file_path = extract_file_path(hook_input, env)
-
+    file_path = extract_file_path(hook_input)
     if not is_security_relevant(file_path):
-        # Not a security-relevant file — no action
         json.dump({}, sys.stdout)
         sys.stdout.write("\n")
         sys.exit(0)
 
-    reminder = build_reminder(file_path)
-
-    if env == "vscode":
-        response = {
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": reminder,
-            }
-        }
-    elif env == "cursor":
-        response = {"additional_context": reminder}
-    else:
-        # Claude Code
-        response = {"additionalContext": reminder}
-
-    json.dump(response, sys.stdout)
+    filename = Path(file_path).name
+    reminder = (
+        f"ACUTIS: You just wrote {filename} — this is a security-relevant file. "
+        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
+        f"with the code and a PCST contract declaring sources, sinks, and transforms. "
+        f"The stop hook will ask you to verify if unverified code exists when you finish."
+    )
+    json.dump({"additional_context": reminder}, sys.stdout)
     sys.stdout.write("\n")
     sys.exit(0)
 

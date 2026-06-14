@@ -6,26 +6,23 @@ This is the **Cursor-specific** plugin for Acutis. For Claude Code, see [acutis-
 
 ## Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Robbatron/acutis-cursor-plugin/main/scripts/install.sh | bash
-```
-
-Then run **Developer: Reload Window** in Cursor.
-
-Or install manually:
+Clone the plugin into Cursor's local plugin directory:
 
 ```bash
-git clone --depth 1 https://github.com/Robbatron/acutis-cursor-plugin.git \
+git clone https://github.com/Robbatron/acutis-cursor-plugin.git \
   ~/.cursor/plugins/local/acutis
-chmod +x ~/.cursor/plugins/local/acutis/scripts/*.sh
 ```
+
+Then run **Developer: Reload Window** in Cursor. Cursor auto-discovers the MCP
+server, hooks, skill, and rule from the plugin directory — no install script and
+no manual `mcp.json`/`hooks.json` editing.
 
 ## Post-Install: Authenticate
 
 Acutis uses a remote MCP server with OAuth. After installing:
 
 1. Open **Cursor Settings → Tools**.
-2. Under **Plugin MCP Servers**, find **acutis** and click **Login**.
+2. Under **Plugin MCP Servers**, find **acutis** and click **Connect** / **Login**.
 3. Approve access in the browser window that opens.
 4. Confirm the green dot appears next to the acutis server.
 
@@ -34,16 +31,23 @@ Acutis uses a remote MCP server with OAuth. After installing:
 | Component | What it does |
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `scan_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `sessionStart` primes the agent. `postToolUse` reminds after security-relevant edits. `stop` blocks completion until code is verified. |
+| **Hooks** | `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes. `postToolUse` reminds after writes and clears verified state on `scan_code` ALLOW. `stop` re-prompts until written code is verified. |
 | **Skill** (`scan`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
 | **Rule** (`acutis-security`) | Always-on rule that enforces scan-before-finish for security-relevant files. |
 
-All components are auto-discovered by Cursor from the plugin directory. No manual `hooks.json` or `mcp.json` editing required.
+### How enforcement works in Cursor
+
+Cursor's `stop` hook cannot hard-block; it emits a `followup_message` that
+auto-submits a new turn (bounded by `loop_limit`). Acutis tracks unverified
+writes in a state file (`/tmp/acutis-unverified.json`): `afterFileEdit` records
+each security-relevant write, `scan-allow-tracker` clears it when `scan_code`
+returns ALLOW, and `stop` re-prompts while anything remains unverified. This is
+robust to Cursor transcripts being disabled.
 
 ## Update
 
 ```bash
-cd ~/.cursor/plugins/local/acutis && git pull --ff-only
+git -C ~/.cursor/plugins/local/acutis pull --ff-only
 ```
 
 Then reload Cursor.
@@ -58,7 +62,7 @@ Then reload Cursor.
 
 ## Troubleshooting
 
-**MCP returns 403/401:** Go to Cursor Settings → Tools, click **Logout** on the acutis server, then **Login** again to refresh your OAuth token.
+**MCP returns 403/401:** Go to Cursor Settings → Tools, click **Logout** on the acutis server, then **Connect** / **Login** again to refresh your OAuth token.
 
 **Hooks show "Config version must be a number":** Ensure `hooks/hooks.json` has `"version": 1` at the top level. Pull the latest version.
 
