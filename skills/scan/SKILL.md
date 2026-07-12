@@ -1,6 +1,6 @@
 ---
 name: scan
-description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to scan, or when scan_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, and deserialization.
+description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to scan, or when scan_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, arg roles, policy attributes, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, deserialization, signature verification, cleartext transmission, format strings, SSTI, XML injection, and argument injection.
 ---
 
 # Security Scan with Acutis
@@ -10,7 +10,7 @@ Call the Acutis `scan_code` MCP tool with your proposed code output and a PCST c
 ## Workflow
 
 1. Identify user-controlled sources: request parameters, body fields, route params, CLI args, environment values, uploaded file names, external JSON, or function parameters representing user input.
-2. Identify every security boundary reached by that data: HTML, SQL, shell command, file path, outbound URL, eval/deserialization, redirect, header, log, LDAP/XPath/NoSQL, CSV cell, dynamic import, or reflection.
+2. Identify every security boundary reached by that data: HTML, SQL, shell command, file path, outbound URL, network transmission, eval/deserialization, redirect, header, log, LDAP/XPath/NoSQL, CSV cell, dynamic import, reflection, signed-payload use, format-string template, template renderer, XML DOM builder, or argv exec.
 3. Mentally trace a witness path for each risky flow: `source -> transform(s) -> sink`. Use this trace to build the contract.
 4. Declare all source functions/variables in `sources`.
 5. Declare dangerous boundaries in `sinks` with the correct `category`.
@@ -78,7 +78,11 @@ For `T-WITNESS`, do not manually add witness IDs unless the tool explicitly asks
 
 ## Contract Examples
 
-**Flask HTML response** (XSS risk — sanitized):
+<examples>
+
+<example name="flask-html-response">
+<description>Flask HTML response — XSS risk, sanitized via `escape`.</description>
+<contract>
 ```json
 {
   "sources": ["request.args.get"],
@@ -86,12 +90,18 @@ For `T-WITNESS`, do not manually add witness IDs unless the tool explicitly asks
   "transforms": [{ "name": "escape", "effect": "EscapesHTML" }]
 }
 ```
+</contract>
+</example>
 
-**Express.js with helper function** (wrapper pattern):
+<example name="express-wrapper-pattern">
+<description>Express.js with a helper that builds HTML and an outer sender. The inner builder is the real HTMLOutput sink; the sender is SafeOutput because it just forwards the already-built string.</description>
+<code>
+```js
+res.send(renderPage(escapeHtml(req.query.msg)))
+```
+</code>
+<contract>
 ```json
-# Code: res.send(renderPage(escapeHtml(req.query.msg)))
-# renderPage builds HTML → it's the real sink (HTMLOutput)
-# res.send just passes the string through → SafeOutput
 {
   "sources": ["req.query"],
   "sinks": [
@@ -101,8 +111,12 @@ For `T-WITNESS`, do not manually add witness IDs unless the tool explicitly asks
   "transforms": [{ "name": "escapeHtml", "effect": "EscapesHTML" }]
 }
 ```
+</contract>
+</example>
 
-**Flask JSON endpoint** (safe — no XSS/SQLi vector):
+<example name="flask-json-endpoint">
+<description>Flask JSON endpoint — no XSS/SQLi vector, `jsonify` does not interpret values as HTML.</description>
+<contract>
 ```json
 {
   "sources": ["request.args.get"],
@@ -110,8 +124,12 @@ For `T-WITNESS`, do not manually add witness IDs unless the tool explicitly asks
   "transforms": []
 }
 ```
+</contract>
+</example>
 
-**SQL query with parameterization**:
+<example name="sql-parameterized">
+<description>SQL query with parameter binding — `cursor.execute` is both the SQL sink and the parameterizing transform.</description>
+<contract>
 ```json
 {
   "sources": ["request.args.get"],
@@ -119,15 +137,18 @@ For `T-WITNESS`, do not manually add witness IDs unless the tool explicitly asks
   "transforms": [{ "name": "cursor.execute", "effect": "ParameterizesSQL" }]
 }
 ```
+</contract>
+</example>
 
-**Dynamic ORDER BY with allowlist guard**:
-The scanner cannot rely on an if-guard as a transform. Prefer a helper call:
-
+<example name="dynamic-order-by-allowlist">
+<description>Dynamic ORDER BY with allowlist validation. The scanner cannot recognize an if-guard as a transform; wrap the validation in a helper call so the source → transform → sink path is explicit.</description>
+<code>
 ```python
 safe_order = validate_order_by(request.args.get("sort"))
 cursor.execute(build_query(safe_order))
 ```
-
+</code>
+<contract>
 ```json
 {
   "sources": ["request.args.get"],
@@ -138,6 +159,10 @@ cursor.execute(build_query(safe_order))
   "transforms": [{ "name": "validate_order_by", "effect": "ParameterizesSQL" }]
 }
 ```
+</contract>
+</example>
+
+</examples>
 
 ## Boundary Categories and Transforms
 
@@ -158,6 +183,80 @@ cursor.execute(build_query(safe_order))
 | CSV formula injection | `CSVCell` | `EscapesCSVFormula` |
 | Dynamic import | `DynamicImport` | `ValidatesModuleName` |
 | Unsafe reflection | `Reflection` | `ValidatesReflectionTarget` |
+| Improper signature verification (CWE-347) | `SignedPayloadUse` | `VerifiesSignature` |
+| Cleartext transmission (CWE-319) | `NetworkTransmission` | `EnforcesTransportSecurity` |
+| Format string injection (CWE-134) | `FormatString` (arg-role-gated) | none; declare the user value as `FormatArg`, never `FormatTemplate` |
+| Server-side template injection (CWE-1336/94) | `TemplateRenderer` (arg-role-gated) | none; pass user input as `TemplateData` render context, never `TemplateSource` |
+| XML DOM / content injection (CWE-91) | `XMLDOMBuilder` (arg-role-gated) | none; declare user input as `Content` (text/attribute value), never `Structural` |
+| Argument injection (CWE-88) | `ArgvExec` (arg-role-gated) | none; keep user input in `Content` operand positions, never `Structural` option/subcommand slots |
+
+## Arg-Role-Gated Sinks
+
+Four categories (`FormatString`, `TemplateRenderer`, `XMLDOMBuilder`, `ArgvExec`) are dangerous only in specific argument positions. The same tainted value is safe as data but dangerous as structure, and only you know which role each argument plays. Declare it with `arg_roles`, keyed by 0-based argument index:
+
+```json
+{
+  "sources": ["user_msg"],
+  "sinks": [
+    {
+      "name": "logger.info",
+      "category": "FormatString",
+      "arg_roles": { "0": "FormatTemplate", "1": "FormatArg" }
+    }
+  ],
+  "transforms": []
+}
+```
+
+Role pairs (danger role first, safe counterpart second):
+
+- `FormatString`: `FormatTemplate` / `FormatArg`
+- `TemplateRenderer`: `TemplateSource` / `TemplateData`
+- `XMLDOMBuilder`: `Structural` / `Content`
+- `ArgvExec`: `Structural` / `Content` (per argv element)
+
+These are absorbing on the danger role: no transform makes a user-controlled format template, template source, or structural position safe. The fix is always to move user input to the safe role (interpolate as a format arg, pass as render context, write as text content, keep as an operand). Tainted data in the safe role does not trip the constraint. Declare roles honestly; do not mark a template-source argument as `TemplateData` to force an ALLOW.
+
+## Signed Payloads and Cleartext Transport
+
+`SignedPayloadUse` (CWE-347) is an absorbing sink for acting on JWT / webhook / token payloads: user-controlled payload data must pass through a `VerifiesSignature` transform before anything trusts it.
+
+```json
+{
+  "sources": ["jwt_payload"],
+  "sinks": [{ "name": "grant_access", "category": "SignedPayloadUse" }],
+  "transforms": [{ "name": "verify_signature", "effect": "VerifiesSignature" }]
+}
+```
+
+`NetworkTransmission` (CWE-319) covers outbound transmission where the endpoint's transport security is unconfirmed (broader than HTTP: ftp, smtp, ws, raw sockets). It is deliberately separate from `OutboundHTTPRequest` (SSRF); pick the category matching the concern at that sink. A validation step that guarantees https (or rejects otherwise) is declared `EnforcesTransportSecurity`:
+
+```json
+{
+  "sources": ["endpoint_url"],
+  "sinks": [{ "name": "http_post", "category": "NetworkTransmission" }],
+  "transforms": [{ "name": "ensure_https", "effect": "EnforcesTransportSecurity" }]
+}
+```
+
+A hardcoded literal `http://` URL with no taint is handled by the policy lane (a `transport:cleartext` forbid atom), not by this category.
+
+## Policy Lane (Customer-Gated CWEs)
+
+Deployments can install a customer `SecurityPolicy` (forbid atoms plus numeric ceilings, resolved server-side; never part of your contract). This gates CWE-326/327/329/760 (weak crypto), CWE-732 (permissions), and CWE-377 (insecure temp files). Your job is to declare honest `attributes` (lowercase `key:value` atoms) on sinks and transforms that have policy-relevant characteristics:
+
+```json
+{
+  "sources": [],
+  "sinks": [
+    { "name": "hashlib.md5", "category": "SafeOutput", "attributes": ["digest:md5"] },
+    { "name": "os.chmod", "category": "SafeOutput", "attributes": ["file-mode:0600"] }
+  ],
+  "transforms": []
+}
+```
+
+If a declared attribute matches the deployment's forbidden set, the scan returns `BLOCK_VIOLATION` with a `policy_violation` finding; fix the code to use a compliant primitive (e.g. SHA-256 instead of MD5, mode 0600 instead of 0777) and rescan. With no policy installed, attributes are inert. In `strict_attributes` deployments, omitting `attributes` entirely on a declaration causes `BLOCK_INCOMPLETE`; declare `"attributes": []` to attest there are no policy-relevant characteristics.
 
 ## Troubleshooting BLOCK_INCOMPLETE
 
