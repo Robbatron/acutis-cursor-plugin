@@ -7,8 +7,9 @@ Cursor's `stop` hook cannot hard-block; it can only emit `followup_message`,
 which auto-submits a new turn (bounded by `loop_limit` in hooks.json). This hook
 uses that to ask the agent to verify, looping until the work is scanned.
 
-Verification state comes from /tmp/acutis-unverified.json, maintained by
-after-file-edit.py (records writes) and scan-allow-tracker.py (clears on ALLOW).
+Verification state comes from this conversation's state file (see
+state_file_for), maintained by after-file-edit.py (records writes) and
+scan-allow-tracker.py (clears on ALLOW).
 The state file is used instead of the conversation transcript because Cursor's
 transcript_path can be null (transcripts disabled) and its format is
 undocumented — relying on it would let enforcement silently fail open.
@@ -18,13 +19,24 @@ stop with a warning) rather than deadlocking the agent, since it could not scan.
 """
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Shared state file written by after-file-edit.py / cleared by scan-allow-tracker.py.
-STATE_FILE = "/tmp/acutis-unverified.json"
+# Conversation-scoped state file written by after-file-edit.py / cleared by
+# scan-allow-tracker.py. Keep state_file_for in sync with those scripts: the
+# conversation_id is charset-validated before it becomes part of a filename
+# (guard-and-reject), with the fixed legacy path as the over-block-safe fallback.
+_CONVERSATION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def state_file_for(hook_input: dict) -> str:
+    cid = str(hook_input.get("conversation_id", "") or "")
+    if not _CONVERSATION_ID_RE.fullmatch(cid):
+        return "/tmp/acutis-unverified.json"
+    return "/tmp/acutis-unverified-cursor-" + cid + ".json"
 
 # Hosted Acutis MCP server health endpoint. Hardcoded (not env- or input-derived)
 # so the health check carries no user-controlled URL — this hook has no SSRF flow.
@@ -43,10 +55,10 @@ def read_hook_input() -> dict:
         return {}
 
 
-def read_state() -> tuple:
+def read_state(hook_input: dict) -> tuple:
     """Return (pending, all) from the state file, or ([], []) if absent/unreadable."""
     try:
-        with open(STATE_FILE) as f:
+        with open(state_file_for(hook_input)) as f:
             state = json.load(f)
         if not isinstance(state, dict):
             return [], []
@@ -79,7 +91,7 @@ def main() -> None:
     if hook_input.get("loop_count", 0) >= MAX_LOOPS:
         allow()
 
-    pending, all_files = read_state()
+    pending, all_files = read_state(hook_input)
     if not all_files or not pending:
         # Nothing security-relevant written, or everything already verified.
         allow()

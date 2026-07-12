@@ -14,7 +14,8 @@ Why this exists:
   Claude Code / VS Code never fire it and keep using the transcript path in
   stop-hook.py.
 
-State file schema (/tmp/acutis-unverified.json):
+State file schema (/tmp/acutis-unverified-cursor-<conversation_id>.json, falling
+back to /tmp/acutis-unverified.json when no valid conversation_id is present):
   {
     "pending": ["path/to/file.py", ...],   # written but not yet scan_code ALLOW'd
     "all":     ["path/to/file.py", ...]     # all security files touched this run
@@ -25,6 +26,7 @@ scan-allow-tracker.py when scan_code returns ALLOW.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,11 +41,22 @@ SKIP_PATTERNS = {
     "package-lock.json", "yarn.lock", "poetry.lock",
 }
 
-# Global, machine-wide state file. A fixed path means every hook in the session
-# agrees on it without threading an id through (which, if mismatched, would fail
-# open — the unsafe direction). Stale entries from a prior session at worst cause
-# a redundant scan request (over-block), which is the safe failure mode.
-STATE_FILE = "/tmp/acutis-unverified.json"
+# Conversation-scoped state file. Cursor sends conversation_id on every hook
+# event, so after-file-edit / scan-allow-tracker / stop-hook all derive the same
+# path for the same conversation. This fixes two bugs the old fixed path had:
+# a stale pending list from a crashed session blocking the next session's first
+# stop, and two concurrent sessions clearing each other's pending lists. The id
+# is charset-validated before it becomes part of a filename (guard-and-reject);
+# anything else falls back to the fixed legacy path, which at worst over-blocks,
+# the safe failure direction.
+_CONVERSATION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def state_file_for(hook_input: dict) -> str:
+    cid = str(hook_input.get("conversation_id", "") or "")
+    if not _CONVERSATION_ID_RE.fullmatch(cid):
+        return "/tmp/acutis-unverified.json"
+    return "/tmp/acutis-unverified-cursor-" + cid + ".json"
 
 
 def is_security_relevant(file_path: str) -> bool:
@@ -72,9 +85,9 @@ def extract_file_path(hook_input: dict) -> str:
     return tool_input.get("path", tool_input.get("file_path", tool_input.get("filePath", "")))
 
 
-def load_state() -> dict:
+def load_state(hook_input: dict) -> dict:
     try:
-        with open(STATE_FILE) as f:
+        with open(state_file_for(hook_input)) as f:
             state = json.load(f)
         # Defensive: ensure expected shape.
         if not isinstance(state, dict):
@@ -86,9 +99,9 @@ def load_state() -> dict:
         return {"pending": [], "all": []}
 
 
-def save_state(state: dict) -> None:
+def save_state(hook_input: dict, state: dict) -> None:
     try:
-        with open(STATE_FILE, "w") as f:
+        with open(state_file_for(hook_input), "w") as f:
             json.dump(state, f)
     except IOError:
         pass
@@ -108,12 +121,12 @@ def main() -> None:
         sys.stdout.write("\n")
         sys.exit(0)
 
-    state = load_state()
+    state = load_state(hook_input)
     if file_path not in state["pending"]:
         state["pending"].append(file_path)
     if file_path not in state["all"]:
         state["all"].append(file_path)
-    save_state(state)
+    save_state(hook_input, state)
 
     # afterFileEdit output support for context injection is not guaranteed by
     # Cursor; the reminder here is best-effort. The post-tool-use hook is the

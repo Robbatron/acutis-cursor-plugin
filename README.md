@@ -1,6 +1,6 @@
 # Acutis — Cursor Plugin
 
-Formal verification for AI-generated code. Catches 10 of the CWE Top 25 with mathematical proof.
+Formal verification for AI-generated code. Verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.
 
 This is the **Cursor-specific** plugin for Acutis. For Claude Code, see [acutis-plugin](https://github.com/Robbatron/acutis-plugin).
 
