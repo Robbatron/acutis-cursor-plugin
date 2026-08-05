@@ -7,6 +7,12 @@ description: Verify AI-generated code with Acutis PCST contracts. Use before sho
 
 Call the Acutis `scan_code` MCP tool with your proposed code output and a PCST contract **before showing the code in chat or writing it to a file**. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The PostToolUse hook fires after a write as a fallback nudge, but the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
 
+## Languages and Scan Units
+
+- `language` accepts `python`, `javascript`, `typescript`, and `java`. Submit TypeScript as `typescript`: TS syntax under `javascript` fails closed with a parse error. Submit TSX as `typescript` too (it fails closed rather than under-verifying JSX sinks).
+- Scan the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never scan a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
+- The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, scan the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
+
 ## Workflow
 
 1. Identify user-controlled sources: request parameters, body fields, route params, CLI args, environment values, uploaded file names, external JSON, or function parameters representing user input.
@@ -190,6 +196,19 @@ cursor.execute(build_query(safe_order))
 | XML DOM / content injection (CWE-91) | `XMLDOMBuilder` (arg-role-gated) | none; declare user input as `Content` (text/attribute value), never `Structural` |
 | Argument injection (CWE-88) | `ArgvExec` (arg-role-gated) | none; keep user input in `Content` operand positions, never `Structural` option/subcommand slots |
 
+### Property-Preserving String Operations
+
+Chained string helpers that neither add nor remove danger (`trim`, `slice`, `toLowerCase`, `normalize`, `String(...)`) re-widen to unknown under Zero Trust when left undeclared. This is the most common cause of a T-RECURSIVE-BODY failure on an otherwise-correct sanitizer body: the sanitizing step works, then a trailing `.trim()` resets the result to untrusted. Declare such calls with the `PreservesProperties` effect:
+
+```json
+{ "name": "trim", "effect": "PreservesProperties" }
+```
+
+Naming rules for transforms:
+
+- A bare method name (`trim`, `replace`, `test`) covers that method on every receiver; `value.replace` covers only calls on `value`. Prefer the bare name when the same helper method appears on several receivers.
+- Hoist inline regex literals to a named constant before calling `.test(...)`: an inline literal receiver produces an unstable clause name derived from the regex source text.
+
 ## Arg-Role-Gated Sinks
 
 Four categories (`FormatString`, `TemplateRenderer`, `XMLDOMBuilder`, `ArgvExec`) are dangerous only in specific argument positions. The same tainted value is safe as data but dangerous as structure, and only you know which role each argument plays. Declare it with `arg_roles`, keyed by 0-based argument index:
@@ -273,6 +292,12 @@ Do not add witnesses manually. Fix the flow or declarations:
 
 **"T-CONSISTENT (reverse): parser observed HTMLOutput at X"**
 The scanner detected an HTML sink you didn't declare. Add it to your contract.
+
+**"T-RECURSIVE-BODY: ... its submitted body does not justify that effect"**
+The declared effect could not be re-derived from the submitted body. Usual causes:
+
+1. A trailing unannotated call (`.trim()`, `.slice()`, `.normalize()`) after the sanitizing step re-widens the return value; declare it `PreservesProperties` (see Property-Preserving String Operations above).
+2. The body genuinely does not implement the declared effect; narrow the effect or fix the implementation.
 
 **`BLOCK_VIOLATION`**
 The contract is good enough to prove a vulnerability. Fix the code, then scan again. Do not weaken the boundary to `SafeOutput` unless the function truly does not interpret the input in that dangerous context.
