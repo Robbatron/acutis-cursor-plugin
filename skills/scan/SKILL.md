@@ -256,6 +256,27 @@ These four categories check EVERY argument by default (write(path, contents) fla
 
 Rules: omitting `arg_roles` checks every argument (the strictest default); every UNDECLARED index stays checked, so a partial map cannot silence the locator slot; each exemption is recorded in the proof bundle as a caller-trusted assumption. Never declare the locator argument `Content`, and never recategorize one of these sinks `SafeOutput` to clear a violation; if the locator is genuinely tainted, sanitize it with a transform (`NormalizesPath`, `ValidatesURLHost`, `EnforcesTransportSecurity`, `ValidatesRedirectTarget`).
 
+## Trusted Deployment-Config Sources
+
+A value that is operator-controlled deployment configuration resolved server-side (an interpreter path from the server's env-config module, a fixed internal service host) is not request data, and declaring it a plain source forces a false BLOCK with no honest exit. Declare it a trusted source instead:
+
+```json
+{
+  "sources": [
+    {
+      "name": "py_bin",
+      "kind": "param",
+      "trust": "deployment_config",
+      "trust_reason": "resolved from the server env-config module at deploy time; not request data"
+    }
+  ],
+  "sinks": [{ "name": "spawn", "category": "CommandExecution" }],
+  "transforms": []
+}
+```
+
+The name then types as safe at direct reads; any concatenation or reassignment involving untrusted data re-widens and still blocks, and the declaration (with its reason) is recorded in the proof bundle as a caller-trusted assumption. `trust_reason` is required. Scope this honestly: request-derived values, user uploads, and anything a client can influence are NEVER deployment config.
+
 ## Signed Payloads and Cleartext Transport
 
 `SignedPayloadUse` (CWE-347) is an absorbing sink for acting on JWT / webhook / token payloads: user-controlled payload data must pass through a `VerifiesSignature` transform before anything trusts it.
