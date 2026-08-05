@@ -236,6 +236,26 @@ Role pairs (danger role first, safe counterpart second):
 
 These are absorbing on the danger role: no transform makes a user-controlled format template, template source, or structural position safe. The fix is always to move user input to the safe role (interpolate as a format arg, pass as render context, write as text content, keep as an operand). Tainted data in the safe role does not trip the constraint. Declare roles honestly; do not mark a template-source argument as `TemplateData` to force an ALLOW.
 
+### Optional Content Exemptions (FileSystemPath, OutboundHTTPRequest, NetworkTransmission, HTTPRedirect)
+
+These four categories check EVERY argument by default (write(path, contents) flags tainted contents too, since every argument is inspected). When an argument is pure data the sink never interprets as a path, URL, endpoint, or redirect target, declare its 0-based index `Content` to exempt it:
+
+```json
+{
+  "sources": ["userData"],
+  "sinks": [
+    {
+      "name": "Bun.write",
+      "category": "FileSystemPath",
+      "arg_roles": { "1": "Content" }
+    }
+  ],
+  "transforms": []
+}
+```
+
+Rules: omitting `arg_roles` checks every argument (the strictest default); every UNDECLARED index stays checked, so a partial map cannot silence the locator slot; each exemption is recorded in the proof bundle as a caller-trusted assumption. Never declare the locator argument `Content`, and never recategorize one of these sinks `SafeOutput` to clear a violation; if the locator is genuinely tainted, sanitize it with a transform (`NormalizesPath`, `ValidatesURLHost`, `EnforcesTransportSecurity`, `ValidatesRedirectTarget`).
+
 ## Signed Payloads and Cleartext Transport
 
 `SignedPayloadUse` (CWE-347) is an absorbing sink for acting on JWT / webhook / token payloads: user-controlled payload data must pass through a `VerifiesSignature` transform before anything trusts it.
