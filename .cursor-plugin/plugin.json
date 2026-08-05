@@ -1,15 +1,23 @@
 {
   "name": "acutis",
   "displayName": "Acutis",
-  "version": "1.1.0",
-  "description": "Formal verification for AI-generated code — verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.",
+  "version": "1.2.0",
+  "description": "Formal verification for AI-generated code \u2014 verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.",
   "author": {
     "name": "Robert Delfs"
   },
   "homepage": "https://acutis.dev",
   "repository": "https://github.com/Robbatron/acutis-cursor-plugin",
   "license": "MIT",
-  "keywords": ["security", "verification", "cwe-top-25", "xss", "sql-injection", "mcp", "zero-trust"],
+  "keywords": [
+    "security",
+    "verification",
+    "cwe-top-25",
+    "xss",
+    "sql-injection",
+    "mcp",
+    "zero-trust"
+  ],
   "rules": "rules/",
   "skills": "skills/"
 }

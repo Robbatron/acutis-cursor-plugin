@@ -28,12 +28,15 @@ scan-allow-tracker.py when scan_code returns ALLOW.
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
-# Keep in sync with post-tool-use.py / stop-hook.py
+# Keep in sync with post-tool-use.py / stop-hook.py.
+# HTML is deliberately ABSENT: ScanRequest.language rejects it, so demanding a
+# scan for .html left the author blocked with no way to comply.
 SECURITY_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx",
-    ".html", ".htm", ".mjs", ".cjs",
+    ".mjs", ".cjs",
 }
 
 SKIP_PATTERNS = {
@@ -85,6 +88,59 @@ def extract_file_path(hook_input: dict) -> str:
     return tool_input.get("path", tool_input.get("file_path", tool_input.get("filePath", "")))
 
 
+def _normalize(text) -> str:
+    if not text:
+        return ""
+    if isinstance(text, list):
+        text = "\n".join(str(t) for t in text)
+    return "".join(str(text).split())
+
+
+def _file_matches_any(file_path: str, codes: list) -> bool:
+    """True when the file's on-disk content overlaps a recently ALLOWed scan
+    payload (normalized containment either way): the canonical
+    scan-then-write order must not leave the file pending."""
+    try:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            content = _normalize(f.read())
+    except OSError:
+        return False
+    for code in codes or []:
+        if code and (code in content or content in code):
+            return True
+    return False
+
+
+# Cross-install reminder dedup (same store as post-tool-use.py and the Claude
+# plugin's hook): only the first hook process to stamp the key in the window
+# emits the reminder, so a double install or the afterFileEdit+postToolUse pair
+# no longer stacks duplicates.
+_DEDUP_FILE = "/tmp/acutis-reminder-dedup.json"
+_DEDUP_WINDOW_S = 5.0
+
+
+def already_reminded(session_key: str, file_path: str) -> bool:
+    key = f"{session_key}:{file_path}"
+    now = time.time()
+    try:
+        with open(_DEDUP_FILE) as f:
+            stamps = json.load(f)
+        if not isinstance(stamps, dict):
+            stamps = {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        stamps = {}
+    stamps = {k: v for k, v in stamps.items() if now - float(v) < 60.0}
+    seen = key in stamps and now - float(stamps[key]) < _DEDUP_WINDOW_S
+    if not seen:
+        stamps[key] = now
+    try:
+        with open(_DEDUP_FILE, "w") as f:
+            json.dump(stamps, f)
+    except OSError:
+        pass
+    return seen
+
+
 def load_state(hook_input: dict) -> dict:
     try:
         with open(state_file_for(hook_input)) as f:
@@ -122,20 +178,32 @@ def main() -> None:
         sys.exit(0)
 
     state = load_state(hook_input)
-    if file_path not in state["pending"]:
+    state.setdefault("recent_allows", [])
+    # Scan-then-write: when the file's content matches a recently ALLOWed scan
+    # payload, the write is already verified and never becomes pending.
+    verified_pre_write = _file_matches_any(file_path, state["recent_allows"])
+    if not verified_pre_write and file_path not in state["pending"]:
         state["pending"].append(file_path)
     if file_path not in state["all"]:
         state["all"].append(file_path)
     save_state(hook_input, state)
+
+    session_key = str(hook_input.get("conversation_id") or "global")
+    if verified_pre_write or already_reminded(session_key, file_path):
+        json.dump({}, sys.stdout)
+        sys.stdout.write("\n")
+        sys.exit(0)
 
     # afterFileEdit output support for context injection is not guaranteed by
     # Cursor; the reminder here is best-effort. The post-tool-use hook is the
     # primary reminder channel. State recording above is the load-bearing part.
     filename = Path(file_path).name
     reminder = (
-        f"ACUTIS: You just wrote {filename} — this is a security-relevant file. "
-        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
-        f"with the code and a PCST contract declaring sources, sinks, and transforms. "
+        f"ACUTIS: You just wrote {filename}, a security-relevant file. If you "
+        f"already verified this exact content with a scan_code ALLOW just "
+        f"before this write, nothing more is needed. Otherwise call the Acutis "
+        f"scan_code MCP tool (server name contains 'acutis') with the code and "
+        f"a PCST contract declaring sources, sinks, and transforms. "
         f"The stop hook will ask you to verify if unverified code exists when you finish."
     )
     json.dump({"additional_context": reminder}, sys.stdout)

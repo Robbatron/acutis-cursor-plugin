@@ -72,8 +72,50 @@ def result_contains_allow(hook_input: dict) -> bool:
     return False
 
 
+def _normalize(text) -> str:
+    if not text:
+        return ""
+    if isinstance(text, list):
+        text = "\n".join(str(t) for t in text)
+    return "".join(str(text).split())
+
+
+def _extract_scanned_code(hook_input: dict) -> str:
+    tool_input = hook_input.get("tool_input", {})
+    if isinstance(tool_input, str):
+        try:
+            tool_input = json.loads(tool_input)
+        except (json.JSONDecodeError, TypeError):
+            tool_input = {}
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    return _normalize(tool_input.get("code"))
+
+
+def _file_matches_code(file_path: str, code: str) -> bool:
+    """Correlate the ALLOWed scan payload against the file's on-disk content
+    (normalized containment either way). An unreadable/deleted file clears:
+    there is nothing left to verify and keeping it pending would deadlock."""
+    try:
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            content = _normalize(f.read())
+    except OSError:
+        return True
+    return bool(code) and (code in content or content in code)
+
+
 def clear_pending(hook_input: dict) -> None:
-    """Clear the pending list, keeping the 'all' history for the session."""
+    """Clear pending entries the ALLOW actually verified.
+
+    Per-file evidence correlation (2026-08-05 field reports): the former
+    unconditional clear let one ALLOW on an unrelated (even fabricated)
+    snippet discharge EVERY pending file. Now a pending file clears only when
+    the scanned code payload overlaps its on-disk content. When the payload is
+    not visible in the hook input, fall back to the legacy full clear rather
+    than deadlocking (that shape is client-controlled, not agent-controlled).
+    The payload is also remembered so a scan-then-write sequence never marks
+    the file pending in the first place (see after-file-edit.py).
+    """
     state_file = state_file_for(hook_input)
     try:
         with open(state_file) as f:
@@ -83,8 +125,18 @@ def clear_pending(hook_input: dict) -> None:
     except (FileNotFoundError, json.JSONDecodeError, IOError):
         state = {"pending": [], "all": []}
 
-    state["pending"] = []
+    state.setdefault("pending", [])
     state.setdefault("all", [])
+    state.setdefault("recent_allows", [])
+
+    code = _extract_scanned_code(hook_input)
+    if code:
+        state["recent_allows"] = (state["recent_allows"] + [code])[-20:]
+        state["pending"] = [
+            fp for fp in state["pending"] if not _file_matches_code(fp, code)
+        ]
+    else:
+        state["pending"] = []
 
     try:
         with open(state_file, "w") as f:
