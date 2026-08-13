@@ -70,8 +70,8 @@ Acutis uses a remote MCP server with OAuth. After installing:
 
 | Component | What it does |
 | --- | --- |
-| **MCP Server** (`mcp.acutis.dev`) | `scan_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes. `postToolUse` reminds after writes and clears verified state on `scan_code` ALLOW. `stop` re-prompts until written code is verified. |
+| **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
+| **Hooks** | `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes. `postToolUse` reminds after writes and clears verified state on `verify_code` ALLOW. `stop` re-prompts until written code is verified. |
 | **Skill** (`scan`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
 | **Rule** (`acutis-security`) | Always-on rule that enforces scan-before-finish for security-relevant files. |
 
@@ -80,7 +80,7 @@ Acutis uses a remote MCP server with OAuth. After installing:
 Cursor's `stop` hook cannot hard-block; it emits a `followup_message` that
 auto-submits a new turn (bounded by `loop_limit`). Acutis tracks unverified
 writes in a state file (`/tmp/acutis-unverified.json`): `afterFileEdit` records
-each security-relevant write, `scan-allow-tracker` clears it when `scan_code`
+each security-relevant write, `scan-allow-tracker` clears it when `verify_code`
 returns ALLOW, and `stop` re-prompts while anything remains unverified. This is
 robust to Cursor transcripts being disabled.
 
@@ -121,7 +121,7 @@ acutis server, then **Connect** / **Login** again to refresh your OAuth token.
 `git restore mcp.json` in the clone, then pull again — do not commit local
 `mcp.json` changes.
 
-**Agent says `scan_code` not found:** Confirm **Plugin MCP Servers → acutis** is
+**Agent says `verify_code` not found:** Confirm **Plugin MCP Servers → acutis** is
 connected (green dot), then reload Cursor. Open a **project** Agent chat (not
 Home-only chat).
 

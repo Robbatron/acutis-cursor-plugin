@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Acutis PostToolUse hook (Cursor) — reminds the agent to call scan_code after a
+Acutis PostToolUse hook (Cursor) — reminds the agent to call verify_code after a
 security-relevant file write.
 
 Cursor's postToolUse input provides `tool_name`, `tool_input`, `tool_output`,
@@ -104,9 +104,9 @@ def main() -> None:
     filename = Path(file_path).name
     reminder = (
         f"ACUTIS: You just wrote {filename}, a security-relevant file. If you "
-        f"already verified this exact content with a scan_code ALLOW just "
+        f"already verified this exact content with a verify_code ALLOW just "
         f"before this write, nothing more is needed. Otherwise call the Acutis "
-        f"scan_code MCP tool (server name contains 'acutis') with the code and "
+        f"verify_code MCP tool (server name contains 'acutis') with the code and "
         f"a PCST contract declaring sources, sinks, and transforms. "
         f"The stop hook will ask you to verify if unverified code exists when you finish."
     )

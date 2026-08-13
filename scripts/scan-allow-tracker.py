@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Acutis Scan-ALLOW Tracker (Cursor) — clears the pending list in this
-conversation's state file when scan_code returns an ALLOW verdict.
+conversation's state file when verify_code returns an ALLOW verdict.
 
 Fires on every `postToolUse` event. Only acts when the tool name contains
-"scan_code" and the result contains "ALLOW". Pairs with after-file-edit.py
+"verify_code" and the result contains "ALLOW". Pairs with after-file-edit.py
 (which records writes) and stop-hook.py (which reads `pending` under Cursor).
 
 This is a no-op under Claude Code / VS Code: those environments enforce via the
@@ -16,7 +16,7 @@ import json
 import re
 import sys
 
-SCAN_TOOL_KEYWORD = "scan_code"
+SCAN_TOOL_KEYWORD = "verify_code"
 
 # Keep in sync with after-file-edit.py / stop-hook.py: conversation-scoped state
 # file with a charset-validated id and a fixed-path fallback (over-block-safe).
@@ -36,7 +36,7 @@ def state_file_for(hook_input: dict) -> str:
 def _text_is_allow(text: str) -> bool:
     """True only for a genuine ALLOW verdict body.
 
-    scan_code's text result is the ScanResponse JSON, so a real verdict carries
+    verify_code's text result is the ScanResponse JSON, so a real verdict carries
     "decision": "ALLOW". BLOCK bodies can contain the bare word ALLOW in
     remediation prose ("iterate until ALLOW"), so a plain substring test fails
     open. Any BLOCK terminal state in the body wins over an ALLOW match.
@@ -50,7 +50,7 @@ def _text_is_allow(text: str) -> bool:
 
 
 def result_contains_allow(hook_input: dict) -> bool:
-    """Return True only if the scan_code result carries a real ALLOW verdict."""
+    """Return True only if the verify_code result carries a real ALLOW verdict."""
     # Cursor postToolUse provides tool_output; also check common aliases.
     for key in ("tool_output", "tool_result", "result", "output"):
         val = hook_input.get(key, "")

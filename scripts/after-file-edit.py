@@ -17,12 +17,12 @@ Why this exists:
 State file schema (/tmp/acutis-unverified-cursor-<conversation_id>.json, falling
 back to /tmp/acutis-unverified.json when no valid conversation_id is present):
   {
-    "pending": ["path/to/file.py", ...],   # written but not yet scan_code ALLOW'd
+    "pending": ["path/to/file.py", ...],   # written but not yet verify_code ALLOW'd
     "all":     ["path/to/file.py", ...]     # all security files touched this run
   }
 
 The state file is appended to here, and the `pending` list is cleared by
-scan-allow-tracker.py when scan_code returns ALLOW.
+scan-allow-tracker.py when verify_code returns ALLOW.
 """
 
 import json
@@ -200,9 +200,9 @@ def main() -> None:
     filename = Path(file_path).name
     reminder = (
         f"ACUTIS: You just wrote {filename}, a security-relevant file. If you "
-        f"already verified this exact content with a scan_code ALLOW just "
+        f"already verified this exact content with a verify_code ALLOW just "
         f"before this write, nothing more is needed. Otherwise call the Acutis "
-        f"scan_code MCP tool (server name contains 'acutis') with the code and "
+        f"verify_code MCP tool (server name contains 'acutis') with the code and "
         f"a PCST contract declaring sources, sinks, and transforms. "
         f"The stop hook will ask you to verify if unverified code exists when you finish."
     )

@@ -21,7 +21,7 @@ def main() -> None:
     message = (
         "Acutis security verification is active. "
         "When you write or edit security-relevant code (.py, .js, .ts, .html), "
-        "you must call the Acutis scan_code MCP tool before finishing. "
+        "you must call the Acutis verify_code MCP tool before finishing. "
         "Use the /scan skill for guidance on building PCST contracts."
     )
 

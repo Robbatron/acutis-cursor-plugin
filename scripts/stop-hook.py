@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Acutis Stop hook (Cursor) — re-prompts the agent if it wrote security-relevant
-code that has not been verified via scan_code.
+code that has not been verified via verify_code.
 
 Cursor's `stop` hook cannot hard-block; it can only emit `followup_message`,
 which auto-submits a new turn (bounded by `loop_limit` in hooks.json). This hook
@@ -108,7 +108,7 @@ def main() -> None:
     message = (
         f"Security-relevant code was written but not yet verified. "
         f"Files needing verification: {names}. "
-        f"Call the Acutis scan_code MCP tool (server name contains 'acutis') "
+        f"Call the Acutis verify_code MCP tool (server name contains 'acutis') "
         f"with the code and a PCST contract. Fix any BLOCK results before completing."
     )
     json.dump({"followup_message": message}, sys.stdout)
