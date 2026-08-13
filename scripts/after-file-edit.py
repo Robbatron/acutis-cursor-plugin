@@ -22,7 +22,7 @@ back to /tmp/acutis-unverified.json when no valid conversation_id is present):
   }
 
 The state file is appended to here, and the `pending` list is cleared by
-scan-allow-tracker.py when verify_code returns ALLOW.
+verification-allow-tracker.py when verify_code returns ALLOW.
 """
 
 import json
@@ -32,8 +32,8 @@ import time
 from pathlib import Path
 
 # Keep in sync with post-tool-use.py / stop-hook.py.
-# HTML is deliberately ABSENT: ScanRequest.language rejects it, so demanding a
-# scan for .html left the author blocked with no way to comply.
+# HTML is deliberately ABSENT: VerificationRequest.language rejects it, so demanding a
+# verification for .html left the author blocked with no way to comply.
 SECURITY_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx",
     ".mjs", ".cjs",
@@ -45,7 +45,7 @@ SKIP_PATTERNS = {
 }
 
 # Conversation-scoped state file. Cursor sends conversation_id on every hook
-# event, so after-file-edit / scan-allow-tracker / stop-hook all derive the same
+# event, so after-file-edit / verification-allow-tracker / stop-hook all derive the same
 # path for the same conversation. This fixes two bugs the old fixed path had:
 # a stale pending list from a crashed session blocking the next session's first
 # stop, and two concurrent sessions clearing each other's pending lists. The id
@@ -97,9 +97,9 @@ def _normalize(text) -> str:
 
 
 def _file_matches_any(file_path: str, codes: list) -> bool:
-    """True when the file's on-disk content overlaps a recently ALLOWed scan
+    """True when the file's on-disk content overlaps a recently ALLOWed verification
     payload (normalized containment either way): the canonical
-    scan-then-write order must not leave the file pending."""
+    verification-then-write order must not leave the file pending."""
     try:
         with open(file_path, encoding="utf-8", errors="replace") as f:
             content = _normalize(f.read())
@@ -179,7 +179,7 @@ def main() -> None:
 
     state = load_state(hook_input)
     state.setdefault("recent_allows", [])
-    # Scan-then-write: when the file's content matches a recently ALLOWed scan
+    # Verification-then-write: when the file's content matches a recently ALLOWed verification
     # payload, the write is already verified and never becomes pending.
     verified_pre_write = _file_matches_any(file_path, state["recent_allows"])
     if not verified_pre_write and file_path not in state["pending"]:

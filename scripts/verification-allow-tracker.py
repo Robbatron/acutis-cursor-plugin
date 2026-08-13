@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Acutis Scan-ALLOW Tracker (Cursor) — clears the pending list in this
+Acutis Verification-ALLOW Tracker (Cursor) — clears the pending list in this
 conversation's state file when verify_code returns an ALLOW verdict.
 
 Fires on every `postToolUse` event. Only acts when the tool name contains
@@ -16,7 +16,7 @@ import json
 import re
 import sys
 
-SCAN_TOOL_KEYWORD = "verify_code"
+VERIFY_TOOL_KEYWORD = "verify_code"
 
 # Keep in sync with after-file-edit.py / stop-hook.py: conversation-scoped state
 # file with a charset-validated id and a fixed-path fallback (over-block-safe).
@@ -36,7 +36,7 @@ def state_file_for(hook_input: dict) -> str:
 def _text_is_allow(text: str) -> bool:
     """True only for a genuine ALLOW verdict body.
 
-    verify_code's text result is the ScanResponse JSON, so a real verdict carries
+    verify_code's text result is the VerificationResponse JSON, so a real verdict carries
     "decision": "ALLOW". BLOCK bodies can contain the bare word ALLOW in
     remediation prose ("iterate until ALLOW"), so a plain substring test fails
     open. Any BLOCK terminal state in the body wins over an ALLOW match.
@@ -93,7 +93,7 @@ def _extract_scanned_code(hook_input: dict) -> str:
 
 
 def _file_matches_code(file_path: str, code: str) -> bool:
-    """Correlate the ALLOWed scan payload against the file's on-disk content
+    """Correlate the ALLOWed verification payload against the file's on-disk content
     (normalized containment either way). An unreadable/deleted file clears:
     there is nothing left to verify and keeping it pending would deadlock."""
     try:
@@ -110,10 +110,10 @@ def clear_pending(hook_input: dict) -> None:
     Per-file evidence correlation (2026-08-05 field reports): the former
     unconditional clear let one ALLOW on an unrelated (even fabricated)
     snippet discharge EVERY pending file. Now a pending file clears only when
-    the scanned code payload overlaps its on-disk content. When the payload is
+    the verified code payload overlaps its on-disk content. When the payload is
     not visible in the hook input, fall back to the legacy full clear rather
     than deadlocking (that shape is client-controlled, not agent-controlled).
-    The payload is also remembered so a scan-then-write sequence never marks
+    The payload is also remembered so a verification-then-write sequence never marks
     the file pending in the first place (see after-file-edit.py).
     """
     state_file = state_file_for(hook_input)
@@ -152,7 +152,7 @@ def main() -> None:
         hook_input = {}
 
     tool_name = str(hook_input.get("tool_name", ""))
-    if SCAN_TOOL_KEYWORD not in tool_name:
+    if VERIFY_TOOL_KEYWORD not in tool_name:
         json.dump({}, sys.stdout)
         sys.stdout.write("\n")
         sys.exit(0)

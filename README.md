@@ -72,15 +72,15 @@ Acutis uses a remote MCP server with OAuth. After installing:
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
 | **Hooks** | `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes. `postToolUse` reminds after writes and clears verified state on `verify_code` ALLOW. `stop` re-prompts until written code is verified. |
-| **Skill** (`scan`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
-| **Rule** (`acutis-security`) | Always-on rule that enforces scan-before-finish for security-relevant files. |
+| **Skill** (`verification`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
+| **Rule** (`acutis-security`) | Always-on rule that enforces verification-before-finish for security-relevant files. |
 
 ### How enforcement works in Cursor
 
 Cursor's `stop` hook cannot hard-block; it emits a `followup_message` that
 auto-submits a new turn (bounded by `loop_limit`). Acutis tracks unverified
 writes in a state file (`/tmp/acutis-unverified.json`): `afterFileEdit` records
-each security-relevant write, `scan-allow-tracker` clears it when `verify_code`
+each security-relevant write, `verification-allow-tracker` clears it when `verify_code`
 returns ALLOW, and `stop` re-prompts while anything remains unverified. This is
 robust to Cursor transcripts being disabled.
 

@@ -18,8 +18,8 @@ import time
 from pathlib import Path
 
 # Keep in sync with after-file-edit.py / stop-hook.py.
-# HTML is deliberately ABSENT: ScanRequest.language rejects it, so demanding a
-# scan for .html left the author blocked with no way to comply.
+# HTML is deliberately ABSENT: VerificationRequest.language rejects it, so demanding a
+# verification for .html left the author blocked with no way to comply.
 SECURITY_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx",
     ".mjs", ".cjs",

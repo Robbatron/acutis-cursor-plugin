@@ -1,18 +1,18 @@
 ---
 name: verify
-description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to scan, or when verify_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, arg roles, policy attributes, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, deserialization, signature verification, cleartext transmission, format strings, SSTI, XML injection, and argument injection.
+description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to verification, or when verify_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, arg roles, policy attributes, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, deserialization, signature verification, cleartext transmission, format strings, SSTI, XML injection, and argument injection.
 ---
 
 # Security Verification with Acutis
 
 Call the Acutis `verify_code` MCP tool with your proposed code output and a PCST contract **before showing the code in chat or writing it to a file**. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The PostToolUse hook fires after a write as a fallback nudge, but the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
 
-## Languages and Scan Units
+## Languages and Verification Units
 
 - `language` accepts `python`, `javascript`, `typescript`, `tsx` (alias `typescriptreact`), and `java`. Submit TypeScript as `typescript`: TS syntax under `javascript` fails closed with a parse error. Submit React components with JSX as `tsx`: JSX attributes are verified as value bindings, so a declared sink attribute (e.g. `dangerouslySetInnerHTML` as HTMLOutput) blocks on tainted input, and an unannotated attribute or spread receiving tainted data fails closed until you declare its name (SafeOutput for React-escaped text props). Text interpolation children (`<span>{x}</span>`) need no declaration.
-- For long sessions, pass `response_detail: "compact"` to receive only what you act on (decision, violations with remediation, missing_coverage, parsed_call_names, plus a `scan_id` handle and `code_sha256`); the full proof bundle stays in the persistent evidence store under the same `scan_id`. The verdict is identical either way.
-- Scan the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never scan a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
-- The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, scan the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
+- For long sessions, pass `response_detail: "compact"` to receive only what you act on (decision, violations with remediation, missing_coverage, parsed_call_names, plus a `verification_id` handle and `code_sha256`); the full proof bundle stays in the persistent evidence store under the same `verification_id`. The verdict is identical either way.
+- Verification the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never verification a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
+- The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, verification the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
 
 ## Workflow
 
@@ -41,7 +41,7 @@ Use the minimal shape:
 }
 ```
 
-The scanner accepts `transforms` as shorthand for `transformations`, and `effect` as shorthand for `transformation_effect`.
+The verifier accepts `transforms` as shorthand for `transformations`, and `effect` as shorthand for `transformation_effect`.
 
 ## Witness-Path Reasoning
 
@@ -148,7 +148,7 @@ res.send(renderPage(escapeHtml(req.query.msg)))
 </example>
 
 <example name="dynamic-order-by-allowlist">
-<description>Dynamic ORDER BY with allowlist validation. The scanner cannot recognize an if-guard as a transform; wrap the validation in a helper call so the source → transform → sink path is explicit.</description>
+<description>Dynamic ORDER BY with allowlist validation. The verifier cannot recognize an if-guard as a transform; wrap the validation in a helper call so the source → transform → sink path is explicit.</description>
 <code>
 ```python
 safe_order = validate_order_by(request.args.get("sort"))
@@ -317,7 +317,7 @@ Deployments can install a customer `SecurityPolicy` (forbid atoms plus numeric c
 }
 ```
 
-If a declared attribute matches the deployment's forbidden set, the scan returns `BLOCK_VIOLATION` with a `policy_violation` finding; fix the code to use a compliant primitive (e.g. SHA-256 instead of MD5, mode 0600 instead of 0777) and rescan. With no policy installed, attributes are inert. In `strict_attributes` deployments, omitting `attributes` entirely on a declaration causes `BLOCK_INCOMPLETE`; declare `"attributes": []` to attest there are no policy-relevant characteristics.
+If a declared attribute matches the deployment's forbidden set, the verification returns `BLOCK_VIOLATION` with a `policy_violation` finding; fix the code to use a compliant primitive (e.g. SHA-256 instead of MD5, mode 0600 instead of 0777) and resubmit. With no policy installed, attributes are inert. In `strict_attributes` deployments, omitting `attributes` entirely on a declaration causes `BLOCK_INCOMPLETE`; declare `"attributes": []` to attest there are no policy-relevant characteristics.
 
 ## Troubleshooting BLOCK_INCOMPLETE
 
@@ -333,7 +333,7 @@ Do not add witnesses manually. Fix the flow or declarations:
 4. Verify source and sink names exactly match observed call names.
 
 **"T-CONSISTENT (reverse): parser observed HTMLOutput at X"**
-The scanner detected an HTML sink you didn't declare. Add it to your contract.
+The verifier detected an HTML sink you didn't declare. Add it to your contract.
 
 **"T-RECURSIVE-BODY: ... its submitted body does not justify that effect"**
 The declared effect could not be re-derived from the submitted body. Usual causes:
@@ -342,7 +342,7 @@ The declared effect could not be re-derived from the submitted body. Usual cause
 2. The body genuinely does not implement the declared effect; narrow the effect or fix the implementation.
 
 **`BLOCK_VIOLATION`**
-The contract is good enough to prove a vulnerability. Fix the code, then scan again. Do not weaken the boundary to `SafeOutput` unless the function truly does not interpret the input in that dangerous context.
+The contract is good enough to prove a vulnerability. Fix the code, then verification again. Do not weaken the boundary to `SafeOutput` unless the function truly does not interpret the input in that dangerous context.
 
 ## Key Principles
 
@@ -351,4 +351,4 @@ The contract is good enough to prove a vulnerability. Fix the code, then scan ag
 3. **SafeOutput is for non-interpreting boundaries** — logging, JSON serialization, response senders, and pass-through wrappers may be SafeOutput when they do not interpret the value.
 4. **Wrapper pattern** — the inner function that builds/interprets HTML, SQL, command strings, paths, URLs, code, etc. is the real sink. The outer function that just forwards the result is usually SafeOutput.
 5. **Keep contracts honest** — never mark a dangerous interpreter as SafeOutput just to get `ALLOW`.
-6. **Scan until ALLOW** — `BLOCK_INCOMPLETE` means fix the contract or code shape; `BLOCK_VIOLATION` means fix the code.
+6. **Verification until ALLOW** — `BLOCK_INCOMPLETE` means fix the contract or code shape; `BLOCK_VIOLATION` means fix the code.

@@ -22,7 +22,7 @@ def main() -> None:
         "Acutis security verification is active. "
         "When you write or edit security-relevant code (.py, .js, .ts, .html), "
         "you must call the Acutis verify_code MCP tool before finishing. "
-        "Use the /scan skill for guidance on building PCST contracts."
+        "Use the /verification skill for guidance on building PCST contracts."
     )
 
     json.dump({"additional_context": message}, sys.stdout)

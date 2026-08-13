@@ -5,17 +5,17 @@ code that has not been verified via verify_code.
 
 Cursor's `stop` hook cannot hard-block; it can only emit `followup_message`,
 which auto-submits a new turn (bounded by `loop_limit` in hooks.json). This hook
-uses that to ask the agent to verify, looping until the work is scanned.
+uses that to ask the agent to verify, looping until the work is verified.
 
 Verification state comes from this conversation's state file (see
 state_file_for), maintained by after-file-edit.py (records writes) and
-scan-allow-tracker.py (clears on ALLOW).
+verification-allow-tracker.py (clears on ALLOW).
 The state file is used instead of the conversation transcript because Cursor's
 transcript_path can be null (transcripts disabled) and its format is
 undocumented — relying on it would let enforcement silently fail open.
 
 If the remote Acutis MCP server is unreachable, the hook fails open (allows the
-stop with a warning) rather than deadlocking the agent, since it could not scan.
+stop with a warning) rather than deadlocking the agent, since it could not verification.
 """
 
 import json
@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 # Conversation-scoped state file written by after-file-edit.py / cleared by
-# scan-allow-tracker.py. Keep state_file_for in sync with those scripts: the
+# verification-allow-tracker.py. Keep state_file_for in sync with those scripts: the
 # conversation_id is charset-validated before it becomes part of a filename
 # (guard-and-reject), with the fixed legacy path as the over-block-safe fallback.
 _CONVERSATION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -96,7 +96,7 @@ def main() -> None:
         # Nothing security-relevant written, or everything already verified.
         allow()
 
-    # Don't deadlock the agent if it cannot reach the server to scan.
+    # Don't deadlock the agent if it cannot reach the server to verification.
     if not check_mcp_health():
         print(
             "Warning: Acutis MCP server is unreachable. Skipping verification enforcement.",

@@ -19,7 +19,7 @@
         "timeout": 5
       },
       {
-        "command": "./scripts/scan-allow-tracker.sh",
+        "command": "./scripts/verification-allow-tracker.sh",
         "timeout": 5
       }
     ],
