@@ -11,7 +11,7 @@ When the reminder appears, immediately use the Acutis scan skill (`skills/scan/S
 
 Call `mcp__acutis__scan_code` with:
 - `code`: the source code as a string
-- `language`: "python", "javascript", "typescript", or "java" (submit TSX as "typescript")
+- `language`: "python", "javascript", "typescript", "tsx" (alias "typescriptreact"), or "java" (submit React/JSX as "tsx")
 - `contract`: a PCST contract declaring sources, sinks, and transforms
 
 Always scan the real diff you wrote, submitted in the language it is written in. Type-only TypeScript edits (interfaces, type aliases, annotations) still scan honestly: declarations-only code has no call sites and reaches ALLOW with a minimal contract. Never fabricate a substitute snippet to satisfy the scan.
