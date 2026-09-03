@@ -7,6 +7,14 @@
         "timeout": 5
       }
     ],
+    "preToolUse": [
+      {
+        "command": "./scripts/pre-tool-use.sh",
+        "matcher": "Write",
+        "timeout": 20,
+        "failClosed": true
+      }
+    ],
     "afterFileEdit": [
       {
         "command": "./scripts/after-file-edit.sh",
@@ -18,6 +26,12 @@
         "command": "./scripts/post-tool-use.sh",
         "timeout": 5
       },
+      {
+        "command": "./scripts/verification-allow-tracker.sh",
+        "timeout": 5
+      }
+    ],
+    "afterMCPExecution": [
       {
         "command": "./scripts/verification-allow-tracker.sh",
         "timeout": 5

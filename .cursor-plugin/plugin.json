@@ -1,7 +1,7 @@
 {
   "name": "acutis",
   "displayName": "Acutis",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Formal verification for AI-generated code \u2014 verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.",
   "author": {
     "name": "Robert Delfs"

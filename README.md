@@ -71,18 +71,61 @@ Acutis uses a remote MCP server with OAuth. After installing:
 | Component | What it does |
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes. `postToolUse` reminds after writes and clears verified state on `verify_code` ALLOW. `stop` re-prompts until written code is verified. |
+| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger and clear pending state. `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes and `stop` re-prompts until written code is verified (backstop). |
 | **Skill** (`verification`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
 | **Rule** (`acutis-security`) | Always-on rule that enforces verification-before-finish for security-relevant files. |
 
 ### How enforcement works in Cursor
 
-Cursor's `stop` hook cannot hard-block; it emits a `followup_message` that
-auto-submits a new turn (bounded by `loop_limit`). Acutis tracks unverified
-writes in a state file (`/tmp/acutis-unverified.json`): `afterFileEdit` records
-each security-relevant write, `verification-allow-tracker` clears it when `verify_code`
-returns ALLOW, and `stop` re-prompts while anything remains unverified. This is
-robust to Cursor transcripts being disabled.
+Nothing is written until an Acutis ALLOW exists, and the written code is exactly
+what Acutis verified. The plugin ships two layers.
+
+**Pre-write gate (`preToolUse`, matcher `Write`, plugin 1.4.0+, Cursor 2.4+).**
+`scripts/pre-tool-use.py` runs before Cursor's `Write` tool touches a
+security-relevant file (`.py .js .jsx .ts .tsx .mjs .cjs`; `node_modules`,
+virtualenvs, lockfiles and Claude scratchpad directories are skipped). The hook
+is a gate, not a verifier: it never calls `verify_code` itself, because only
+the model can author the PCST contract. It checks that the model already
+obtained a `verify_code` ALLOW whose `code` payload contains the text about to
+be written:
+
+- Both sides are normalized with `"".join(text.split())` (whitespace removed).
+- The match is one-directional: the normalized written text must be a
+  substring of a normalized ALLOWed payload. A whole-file write when only one
+  function was verified is denied; a fragment edit inside a verified function
+  is allowed; empty written text is denied.
+- Every ALLOW is recorded in the ALLOW ledger
+  `/tmp/acutis-allow-cursor-<conversation_id>.json` by
+  `scripts/verification-allow-tracker.py` (registered on `postToolUse` and
+  `afterMCPExecution`), 200 most recent payloads, atomic writes. Cursor
+  transcripts exclude tool outputs and `transcript_path` can be null, so the
+  ledger is the only durable record of what was verified.
+- On deny, the hook returns `{"permission": "deny", "user_message": ...,
+  "agent_message": ...}`; the `agent_message` tells the agent to call
+  `verify_code` with the exact code and re-issue the write byte-for-byte.
+  (Cursor drops `updated_input.content` for `Write`, so denying is the only
+  supported way to keep unverified content off disk.)
+- Availability: only when nothing matches, the hook GETs
+  `https://mcp.acutis.dev/health` (3 s). If the server is unreachable the write
+  is allowed with a stderr note (same fail-open policy as the stop hook).
+- The script is fail-closed on its own (unparseable input or an internal error
+  denies; exit code 2 also denies). `failClosed: true` is set on the hook entry
+  as well, although Cursor documents that option only for
+  `beforeShellExecution`, `beforeMCPExecution` and `beforeReadFile`.
+- Cursor documents `file_path` + `content` for a whole-file `Write`; the
+  search/replace shape is undocumented, so the gate also inspects `new_string`,
+  `newString`, `edits[]`, `replacements[]` and similar carriers. An unrecognised
+  shape on a security-relevant path is denied and the input keys are logged to
+  stderr so the shape can be learned.
+
+**Backstop (`afterFileEdit` + `stop`).** Cursor's `stop` hook cannot hard-block;
+it emits a `followup_message` that auto-submits a new turn (bounded by
+`loop_limit`). `afterFileEdit` records each security-relevant write in
+`/tmp/acutis-unverified-cursor-<conversation_id>.json`,
+`verification-allow-tracker` clears it when `verify_code` returns ALLOW, and
+`stop` re-prompts while anything remains unverified. The stop hook is
+path-only (it never matches content); it catches writes that reached disk
+because the gate failed open.
 
 ## Update
 
@@ -124,6 +167,22 @@ acutis server, then **Connect** / **Login** again to refresh your OAuth token.
 **Agent says `verify_code` not found:** Confirm **Plugin MCP Servers → acutis** is
 connected (green dot), then reload Cursor. Open a **project** Agent chat (not
 Home-only chat).
+
+**Every write to a `.py`/`.ts` file is denied with "no verify_code ALLOW covers
+this exact text":** This is the pre-write gate working. Call `verify_code`
+with the exact code you are about to write (not a summary or a fragment
+smaller than the write), get ALLOW, then re-issue the write with the verified
+text byte-for-byte. If you verified the whole file and still get denied, the
+text drifted between the verification and the write.
+
+**Gate denies with "Unrecognised Write input shape":** Cursor sent a `Write`
+payload without a recognised new-text field. The keys are printed to the hook's
+stderr (Cursor: Output panel, Hooks); please report them so the gate can learn
+the shape.
+
+**Gate allows with "mcp.acutis.dev unreachable" on stderr:** The server was
+down during a write; the gate failed open and the stop hook remains the
+backstop.
 
 **Hooks show "Config version must be a number":** Ensure `hooks/hooks.json` has
 `"version": 1` at the top level. Pull the latest version.

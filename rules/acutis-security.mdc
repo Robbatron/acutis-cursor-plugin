@@ -1,5 +1,5 @@
 ---
-description: Acutis security verification — automatically verification security-relevant code before completing
+description: Acutis security verification — automatically verify security-relevant code before completing
 alwaysApply: true
 ---
 
@@ -14,8 +14,8 @@ Call `mcp__acutis__verify_code` with:
 - `language`: "python", "javascript", "typescript", "tsx" (alias "typescriptreact"), or "java" (submit React/JSX as "tsx")
 - `contract`: a PCST contract declaring sources, sinks, and transforms
 
-Always verification the real diff you wrote, submitted in the language it is written in. Type-only TypeScript edits (interfaces, type aliases, annotations) still verification honestly: declarations-only code has no call sites and reaches ALLOW with a minimal contract. Never fabricate a substitute snippet to satisfy the verification.
+Always verify the real diff you wrote, submitted in the language it is written in. Type-only TypeScript edits (interfaces, type aliases, annotations) still verify honestly: declarations-only code has no call sites and reaches ALLOW with a minimal contract. Never fabricate a substitute snippet to satisfy the verification.
 
-If the result is BLOCK_VIOLATION, fix the code and verification again. If BLOCK_INCOMPLETE, use the verification skill's troubleshooting guidance: add missing semantic coverage, use SafeOutput only for non-interpreting helpers, and reshape hidden flows so Acutis can infer witnesses. Only proceed when the result is ALLOW.
+If the result is BLOCK_VIOLATION, fix the code and verify again. If BLOCK_INCOMPLETE, use the verification skill's troubleshooting guidance: add missing semantic coverage, use SafeOutput only for non-interpreting helpers, and reshape hidden flows so Acutis can infer witnesses. Only proceed when the result is ALLOW.
 
 Do not weaken contracts to get ALLOW. Acutis verifies AI-generated code output, not whole files or repositories.

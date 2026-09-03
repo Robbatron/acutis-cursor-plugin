@@ -96,7 +96,7 @@ def main() -> None:
         # Nothing security-relevant written, or everything already verified.
         allow()
 
-    # Don't deadlock the agent if it cannot reach the server to verification.
+    # Don't deadlock the agent if it cannot reach the server to verify.
     if not check_mcp_health():
         print(
             "Warning: Acutis MCP server is unreachable. Skipping verification enforcement.",

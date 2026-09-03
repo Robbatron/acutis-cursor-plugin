@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to verification, or when verify_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, arg roles, policy attributes, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, deserialization, signature verification, cleartext transmission, format strings, SSTI, XML injection, and argument injection.
+description: Verify AI-generated code with Acutis PCST contracts. Use before showing or writing security-relevant code, when an Acutis hook reminds you to verify, or when verify_code returns BLOCK_INCOMPLETE/T-WITNESS. Teaches sources, sinks, transforms, SafeOutput, arg roles, policy attributes, and witness-path reasoning for XSS, SQLi, command injection, path traversal, SSRF, redirects, headers/logs, LDAP/XPath/NoSQL, CSV, dynamic import, reflection, code evaluation, deserialization, signature verification, cleartext transmission, format strings, SSTI, XML injection, and argument injection.
 ---
 
 # Security Verification with Acutis
@@ -11,8 +11,8 @@ Call the Acutis `verify_code` MCP tool with your proposed code output and a PCST
 
 - `language` accepts `python`, `javascript`, `typescript`, `tsx` (alias `typescriptreact`), and `java`. Submit TypeScript as `typescript`: TS syntax under `javascript` fails closed with a parse error. Submit React components with JSX as `tsx`: JSX attributes are verified as value bindings, so a declared sink attribute (e.g. `dangerouslySetInnerHTML` as HTMLOutput) blocks on tainted input, and an unannotated attribute or spread receiving tainted data fails closed until you declare its name (SafeOutput for React-escaped text props). Text interpolation children (`<span>{x}</span>`) need no declaration.
 - For long sessions, pass `response_detail: "compact"` to receive only what you act on (decision, violations with remediation, missing_coverage, parsed_call_names, plus a `verification_id` handle and `code_sha256`); the full proof bundle stays in the persistent evidence store under the same `verification_id`. The verdict is identical either way.
-- Verification the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never verification a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
-- The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, verification the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
+- Verify the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never verify a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
+- The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, verify the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
 
 ## Workflow
 
@@ -342,7 +342,7 @@ The declared effect could not be re-derived from the submitted body. Usual cause
 2. The body genuinely does not implement the declared effect; narrow the effect or fix the implementation.
 
 **`BLOCK_VIOLATION`**
-The contract is good enough to prove a vulnerability. Fix the code, then verification again. Do not weaken the boundary to `SafeOutput` unless the function truly does not interpret the input in that dangerous context.
+The contract is good enough to prove a vulnerability. Fix the code, then verify again. Do not weaken the boundary to `SafeOutput` unless the function truly does not interpret the input in that dangerous context.
 
 ## Key Principles
 
@@ -351,4 +351,4 @@ The contract is good enough to prove a vulnerability. Fix the code, then verific
 3. **SafeOutput is for non-interpreting boundaries** — logging, JSON serialization, response senders, and pass-through wrappers may be SafeOutput when they do not interpret the value.
 4. **Wrapper pattern** — the inner function that builds/interprets HTML, SQL, command strings, paths, URLs, code, etc. is the real sink. The outer function that just forwards the result is usually SafeOutput.
 5. **Keep contracts honest** — never mark a dangerous interpreter as SafeOutput just to get `ALLOW`.
-6. **Verification until ALLOW** — `BLOCK_INCOMPLETE` means fix the contract or code shape; `BLOCK_VIOLATION` means fix the code.
+6. **Verify until ALLOW** — `BLOCK_INCOMPLETE` means fix the contract or code shape; `BLOCK_VIOLATION` means fix the code.
