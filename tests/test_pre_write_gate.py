@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from conftest import load, repo_dir, run, seed_ledger, write_file
+from conftest import common_module, load, repo_dir, run, seed_ledger, write_file
 
 CID = "conv-abc_123"
 
@@ -16,6 +16,29 @@ FUNC = "def greet(name):\n    return 'hi ' + name\n"
 WHOLE = "import os\n\n" + FUNC + "\n\nprint(greet('x'))\n"
 FRAGMENT = "return 'hi ' + name"
 OTHER = "def other():\n    return 2\n"
+
+# Indentation is control flow. These four shapes pin the normalization: a
+# dedent out of a guard is a different program, a re-indentation is not.
+GUARDED = (
+    "def handle(u):\n"
+    "    if is_safe(u):\n"
+    "        run(u)\n"
+    "        log(u)\n"
+)
+DEDENTED = (
+    "def handle(u):\n"
+    "    if is_safe(u):\n"
+    "        run(u)\n"
+    "    log(u)\n"
+)
+REINDENTED = (
+    "def handle(u):\n"
+    "  if is_safe(u):\n"
+    "    run(u)\n"
+    "    log(u)\n"
+)
+GUARDED_FRAGMENT = "if is_safe(u):\n    run(u)\n    log(u)\n"
+GUARDED_WHOLE = "import sys\n\n" + GUARDED + "\n\nhandle(sys.argv[1])\n"
 
 DENY_HEAD = "Acutis: "
 DENY_TAIL = (
@@ -161,6 +184,36 @@ def test_allow_attests_the_written_text(gate, common, capsys, project):
 
 
 # ---------------------------------------------------------------- gate: denies
+
+
+def test_dedent_out_of_guard_denies(gate, common, capsys):
+    """A call moved out of its safety guard is a different program, so the
+    ALLOW for the guarded form must not cover it."""
+    seed_ledger(common, CID, [GUARDED])
+    rc, out, err = run(gate, capsys, write_event("/work/app.py", content=DEDENTED))
+    assert out["permission"] == "deny"
+
+
+def test_pure_reindentation_allows(gate, common, capsys):
+    """Four spaces to two changes no block structure, so the ALLOW still holds."""
+    seed_ledger(common, CID, [GUARDED])
+    rc, out, err = run(gate, capsys, write_event("/work/app.py", content=REINDENTED))
+    assert out == {"permission": "allow"}
+
+
+def test_fragment_at_depth_zero_allows(gate, common, capsys):
+    """An edit hands the guarded block over at its own depth zero; the payload
+    holds it one level deeper, and the depth-shifted form still matches."""
+    seed_ledger(common, CID, [GUARDED])
+    rc, out, err = run(gate, capsys, write_event("/work/app.py", new_string=GUARDED_FRAGMENT))
+    assert out == {"permission": "allow"}
+
+
+def test_whole_file_superset_of_function_allow_denies(gate, common, capsys):
+    """The file is the output, so a function-level ALLOW never covers it."""
+    seed_ledger(common, CID, [GUARDED])
+    rc, out, err = run(gate, capsys, write_event("/work/app.py", content=GUARDED_WHOLE))
+    assert out["permission"] == "deny"
 
 
 def test_whole_file_with_only_function_verified_denies(gate, common, capsys):
@@ -321,7 +374,11 @@ def test_recorder_dedups_and_caps(tracker, common, capsys):
         run(tracker, capsys, allow_event(code="x = 4\n"))
     finally:
         common.LEDGER_CAP = original
-    assert ledger(common) == ["x=2", "x=3", "x=4"]
+    assert ledger(common) == [
+        common.normalize("x = 2\n"),
+        common.normalize("x = 3\n"),
+        common.normalize("x = 4\n"),
+    ]
 
 
 def test_recorder_survives_corrupt_ledger(tracker, common, capsys):
@@ -395,7 +452,7 @@ def test_wrapper_unparseable_input_denies():
 def test_wrapper_ledger_hit_allows_real_path():
     clean_wrapper_state()
     with open(WRAPPER_LEDGER, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps({"allowed": ["".join(FUNC.split())]}))
+        handle.write(json.dumps({"allowed": [common_module().normalize(FUNC)]}))
     event = json.dumps({
         "tool_name": "Write",
         "tool_input": {"file_path": "/work/app.py", "content": FUNC},

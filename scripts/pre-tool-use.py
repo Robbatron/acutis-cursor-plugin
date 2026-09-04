@@ -9,11 +9,14 @@ contract. It checks that the model already obtained an ALLOW whose `code`
 payload CONTAINS the text about to be written, and denies otherwise with an
 `agent_message` the model acts on.
 
-Match rule (one-directional): both sides are normalized by removing whitespace;
-the normalized written text must be a substring of a normalized ALLOWed
-payload. A whole-file write with only one function verified is denied; a
-fragment edit inside a verified function is allowed; empty written text on a
-security-relevant path is denied.
+Match rule (one-directional): both sides are normalized by stripping the
+whitespace inside each line and tagging that line with its block depth, so
+indentation survives; the normalized written text must be a substring of a
+normalized ALLOWed payload, at the same depth or at a uniform shift of it. A
+whole-file write with only one function verified is denied; a fragment edit
+inside a verified function is allowed even when it arrives at its own depth
+zero; a dedent that moves a call out of its guard is denied, because the
+depths differ; empty written text on a security-relevant path is denied.
 
 Attestation: on allow, a single whole-text write records its content hash in
 the conversation's sweep state, so the post-shell and stop sweeps do not
@@ -116,12 +119,12 @@ def extract_written_texts(tool_input):
 
 
 def covered(norms, allowed):
-    """One-directional: every normalized fragment is a substring of some
-    normalized ALLOWed payload."""
+    """One-directional: every normalized fragment sits inside some normalized
+    ALLOWed payload at the same indentation structure, depth-shifted forms
+    included, so a fragment handed over at its own depth zero still matches a
+    payload where that fragment sits inside a function."""
     for norm in norms:
-        if not norm:
-            return False
-        if not any(norm in payload for payload in allowed):
+        if not ac.covered(norm, allowed):
             return False
     return True
 

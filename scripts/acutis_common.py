@@ -19,7 +19,9 @@ directory on sys.path. The module owns:
 - the one-directional coverage rule shared by the pre-write gate, the
   post-shell sweep and the stop sweep: a file is covered when its normalized
   content is a substring of a ledger payload, or when its content hash equals
-  the hash attested right after a gate-allowed Write.
+  the hash attested right after a gate-allowed Write. Normalization tags each
+  line with its block depth, so a re-indentation still matches while a dedent
+  out of a guard does not.
 
 Every path helper re-validates its own argument (guard-and-reject) because a
 caller-side check does not cross the function boundary.
@@ -76,13 +78,91 @@ _CRLF_RE = re.compile(r"[\r\n]+")
 # ------------------------------------------------------------------ text
 
 
-def normalize(text) -> str:
-    """Whitespace-free form used for every containment check."""
-    if text is None:
-        return ""
+_DEPTH_SEP = "\x1f"
+_MAX_DEPTH_SHIFT = 24
+
+
+def _normalized_lines(text) -> list:
+    """(block depth, whitespace-free content) for each non-blank line.
+
+    Depth comes from an indent stack, so re-indenting a block (four spaces to
+    two) leaves every depth unchanged while moving a line out of its block
+    changes one.
+    """
+    out = []
+    stack = [0]
     if isinstance(text, list):
         text = "\n".join(str(t) for t in text)
-    return "".join(str(text).split())
+    for raw in str(text).splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        width = len(raw) - len(raw.lstrip())
+        while len(stack) > 1 and width < stack[-1]:
+            stack.pop()
+        if width > stack[-1]:
+            stack.append(width)
+        out.append((len(stack) - 1, "".join(stripped.split())))
+    return out
+
+
+def normalize(text) -> str:
+    """Whitespace-insensitive within a line, indentation-preserving across them.
+
+    Stripping all whitespace erases indentation, and in Python indentation is
+    control flow. A verified snippet and the same snippet with its last line
+    dedented out of a guard stripped to identical text, so a dedent that moves
+    a call out of its safety check passed the gate as already covered. Tagging
+    each line with its block depth closes that: re-indentation still matches,
+    a dedent does not.
+    """
+    if text is None:
+        return ""
+    return "\n".join(
+        str(depth) + _DEPTH_SEP + content for depth, content in _normalized_lines(text)
+    )
+
+
+def _depth_shifts(normalized: str) -> list:
+    """The same block re-based deeper, so a fragment verified inside a function
+    still matches when an edit hands it over at its own depth zero."""
+    rows = []
+    for line in normalized.split("\n"):
+        depth, sep, content = line.partition(_DEPTH_SEP)
+        if not sep:
+            return []
+        try:
+            rows.append((int(depth), content))
+        except ValueError:
+            return []
+    shifted = []
+    for shift in range(1, _MAX_DEPTH_SHIFT):
+        shifted.append(
+            "\n".join(str(depth + shift) + _DEPTH_SEP + content for depth, content in rows)
+        )
+    return shifted
+
+
+def covered(normalized_written: str, allowed: list) -> bool:
+    """One-directional match: the written text must sit inside an ALLOWed
+    payload, at the same indentation structure.
+
+    A whole-file write covered only by a function-level ALLOW is NOT covered
+    (the file is the output, so verify the file). A fragment of a verified
+    function is covered, including when the fragment arrives at its own depth
+    zero, which is why the shifted forms are tried.
+    """
+    if not normalized_written:
+        return False
+    candidates = [normalized_written]
+    for shifted in _depth_shifts(normalized_written):
+        candidates.append(shifted)
+    for payload in allowed:
+        if not payload:
+            continue
+        if any(candidate in payload for candidate in candidates):
+            return True
+    return False
 
 
 def one_line(text) -> str:

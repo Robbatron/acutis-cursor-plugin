@@ -90,11 +90,16 @@ the model can author the PCST contract. It checks that the model already
 obtained a `verify_code` ALLOW whose `code` payload contains the text about to
 be written:
 
-- Both sides are normalized with `"".join(text.split())` (whitespace removed).
+- Both sides are normalized per line: the whitespace inside a line is removed,
+  and the line is tagged with its block depth taken from an indent stack.
+  Indentation is control flow in Python, so it has to survive normalization.
 - The match is one-directional: the normalized written text must be a
-  substring of a normalized ALLOWed payload. A whole-file write when only one
-  function was verified is denied; a fragment edit inside a verified function
-  is allowed; empty written text is denied.
+  substring of a normalized ALLOWed payload, at the same depths or at a
+  uniform shift of them. A whole-file write when only one function was
+  verified is denied; a fragment edit inside a verified function is allowed,
+  including when the edit hands the fragment over at its own depth zero; a
+  dedent that moves a call out of its guard is denied, because that is a
+  different program; empty written text is denied.
 - Every ALLOW is recorded in the ALLOW ledger
   `/tmp/acutis-allow-cursor-<conversation_id>.json` by
   `scripts/verification-allow-tracker.py` (registered on `postToolUse` and
