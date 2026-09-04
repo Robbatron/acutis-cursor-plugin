@@ -1,120 +1,133 @@
 #!/usr/bin/env python3
 """
-Acutis Stop hook (Cursor) — re-prompts the agent if it wrote security-relevant
-code that has not been verified via verify_code.
+Acutis stop sweep (Cursor `stop`).
 
-Cursor's `stop` hook cannot hard-block; it can only emit `followup_message`,
-which auto-submits a new turn (bounded by `loop_limit` in hooks.json). This hook
-uses that to ask the agent to verify, looping until the work is verified.
+Reduced role (operator decision, 2026-09-04): enforcement happens per event,
+before code lands, in the pre-write gate and the shell gate. This hook is no
+longer the enforcement path and no longer tracks pending writes by path. It is
+a silent filesystem sweep kept as a backstop through a validation period, and
+it is scheduled for removal once the per-event gates have proven themselves.
 
-Verification state comes from this conversation's state file (see
-state_file_for), maintained by after-file-edit.py (records writes) and
-verification-allow-tracker.py (clears on ALLOW).
-The state file is used instead of the conversation transcript because Cursor's
-transcript_path can be null (transcripts disabled) and its format is
-undocumented — relying on it would let enforcement silently fail open.
+What it does: list the project's security-relevant files, keep the ones whose
+mtime is after the session start mark (recorded by `session-start.py`, or by
+whichever hook fires first in a cloud agent, where sessionStart never runs),
+add any finding the post-shell sweep parked because `afterShellExecution` has
+no way to talk to the agent, and drop everything whose current content is
+covered by a verify_code ALLOW or by the pre-write gate's attestation. Only
+what survives all of that produces a `followup_message`; otherwise the hook
+emits no output field and the stop proceeds.
 
-If the remote Acutis MCP server is unreachable, the hook fails open (allows the
-stop with a warning) rather than deadlocking the agent, since it could not verification.
+Cursor's `stop` hook cannot hard-block; `followup_message` auto-submits one
+more turn, bounded by MAX_LOOPS here and `loop_limit` in hooks.json. If the
+remote Acutis server is unreachable the hook fails open rather than deadlocking
+the agent, since it could not have verified anything either.
 """
 
-import json
-import re
+import os
 import sys
-import urllib.error
-import urllib.request
-from pathlib import Path
 
-# Conversation-scoped state file written by after-file-edit.py / cleared by
-# verification-allow-tracker.py. Keep state_file_for in sync with those scripts: the
-# conversation_id is charset-validated before it becomes part of a filename
-# (guard-and-reject), with the fixed legacy path as the over-block-safe fallback.
-_CONVERSATION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import acutis_common as ac  # noqa: E402
 
-def state_file_for(hook_input: dict) -> str:
-    cid = str(hook_input.get("conversation_id", "") or "")
-    if not _CONVERSATION_ID_RE.fullmatch(cid):
-        return "/tmp/acutis-unverified.json"
-    return "/tmp/acutis-unverified-cursor-" + cid + ".json"
-
-# Hosted Acutis MCP server health endpoint. Hardcoded (not env- or input-derived)
-# so the health check carries no user-controlled URL — this hook has no SSRF flow.
-MCP_HEALTH_URL = "https://mcp.acutis.dev/health"
-MCP_HEALTH_TIMEOUT = 3  # seconds
-
-# Stop re-prompting after this many loops as a backstop (hooks.json also caps via loop_limit).
 MAX_LOOPS = 3
 
-
-def read_hook_input() -> dict:
-    try:
-        raw = sys.stdin.read()
-        return json.loads(raw) if raw.strip() else {}
-    except (json.JSONDecodeError, IOError):
-        return {}
-
-
-def read_state(hook_input: dict) -> tuple:
-    """Return (pending, all) from the state file, or ([], []) if absent/unreadable."""
-    try:
-        with open(state_file_for(hook_input)) as f:
-            state = json.load(f)
-        if not isinstance(state, dict):
-            return [], []
-        return state.get("pending", []), state.get("all", [])
-    except (FileNotFoundError, json.JSONDecodeError, IOError):
-        return [], []
+FOLLOWUP_HEAD = (
+    "Security-relevant code was written but not yet verified. "
+    "Files needing verification: "
+)
+FOLLOWUP_TAIL = (
+    ". Call the Acutis verify_code MCP tool (server name contains 'acutis') "
+    "with the code and a PCST contract. Fix any BLOCK results before completing."
+)
 
 
-def check_mcp_health() -> bool:
-    """True if the Acutis MCP server is reachable. Fails open (returns True on
-    error is the caller's choice) — here we just report reachability."""
-    try:
-        req = urllib.request.Request(MCP_HEALTH_URL, method="GET")
-        with urllib.request.urlopen(req, timeout=MCP_HEALTH_TIMEOUT):
-            return True
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
-        return False
+def sweep_root(hook_input):
+    workspace = hook_input.get("workspace_roots")
+    if isinstance(workspace, list):
+        for item in workspace:
+            root = ac.validated_root(item)
+            if root:
+                return root
+    return ac.validated_root(os.environ.get("CURSOR_PROJECT_DIR", ""))
 
 
-def allow() -> None:
-    json.dump({}, sys.stdout)
-    sys.stdout.write("\n")
-    sys.exit(0)
+def written_since(root, started_at_ns):
+    """Absolute paths under root whose mtime is after the session start mark,
+    or None when the listing is above the cap. Zero trust: the root is
+    re-validated here, because a caller-side check does not cross the
+    function boundary."""
+    top = ac.validated_root(root)
+    if not top:
+        return []
+    rels = ac.list_files(top)
+    if rels is None:
+        return None
+    touched = []
+    for rel in rels:
+        full = ac.validated_abs_path(os.path.join(top, rel))
+        if not full:
+            continue
+        try:
+            stamp = os.stat(full).st_mtime_ns
+        except OSError:
+            continue
+        if stamp > started_at_ns:
+            touched.append(full)
+    return touched
 
 
-def main() -> None:
-    hook_input = read_hook_input()
+def uncovered_now(paths, allowed, attested):
+    """The subset whose content on disk has no verify_code ALLOW behind it."""
+    found = []
+    for path in paths:
+        target = ac.validated_abs_path(path)
+        if not target:
+            continue
+        if ac.file_covered(target, allowed, attested):
+            continue
+        found.append(target)
+    return found
 
-    # Loop guard: stop re-prompting after a few rounds.
-    if hook_input.get("loop_count", 0) >= MAX_LOOPS:
-        allow()
 
-    pending, all_files = read_state(hook_input)
-    if not all_files or not pending:
-        # Nothing security-relevant written, or everything already verified.
-        allow()
-
-    # Don't deadlock the agent if it cannot reach the server to verify.
-    if not check_mcp_health():
-        print(
-            "Warning: Acutis MCP server is unreachable. Skipping verification enforcement.",
-            file=sys.stderr,
-        )
-        allow()
-
-    names = ", ".join(Path(f).name for f in pending)
-    message = (
-        f"Security-relevant code was written but not yet verified. "
-        f"Files needing verification: {names}. "
-        f"Call the Acutis verify_code MCP tool (server name contains 'acutis') "
-        f"with the code and a PCST contract. Fix any BLOCK results before completing."
-    )
-    json.dump({"followup_message": message}, sys.stdout)
-    sys.stdout.write("\n")
-    sys.exit(0)
+def main():
+    hook_input = ac.read_hook_input()
+    if hook_input is None:
+        ac.emit({})
+        return 0
+    loop_count = hook_input.get("loop_count", 0)
+    if isinstance(loop_count, int) and loop_count >= MAX_LOOPS:
+        ac.emit({})
+        return 0
+    started = ac.read_session_start(hook_input)
+    state = ac.load_sweep_state(hook_input)
+    allowed = ac.load_allowed(hook_input)
+    candidates = ac.merge_paths(state["pending"], [])
+    root = sweep_root(hook_input)
+    if root and started:
+        touched = written_since(root, started)
+        if touched is None:
+            ac.note("stop sweep: listing above the snapshot cap; sweep skipped")
+        else:
+            candidates = ac.merge_paths(candidates, touched)
+    uncovered = uncovered_now(candidates, allowed, state["attested"])
+    if not uncovered:
+        ac.emit({})
+        return 0
+    if not ac.acutis_reachable():
+        ac.note("stop sweep: mcp.acutis.dev unreachable; allowing the stop")
+        ac.emit({})
+        return 0
+    state["pending"] = []
+    ac.save_sweep_state(hook_input, state)
+    names = ac.one_line(", ".join(sorted({os.path.basename(path) for path in uncovered})))
+    ac.emit({"followup_message": FOLLOWUP_HEAD + names + FOLLOWUP_TAIL})
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as exc:  # noqa: BLE001 - a backstop must never break the turn
+        print("acutis stop sweep: internal error " + ac.one_line(repr(exc)), file=sys.stderr)
+        sys.exit(0)

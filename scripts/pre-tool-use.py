@@ -2,79 +2,61 @@
 """
 Acutis pre-write gate (Cursor `preToolUse`, matcher "Write").
 
-Decision (operator-approved 2026-09-03): nothing is written until an Acutis
-verify_code ALLOW exists, and the written text must be exactly what Acutis
-verified. This hook is a GATE, not a verifier: it never calls verify_code
-itself (only the model can author the PCST contract). It checks that the model
-already obtained an ALLOW whose `code` payload CONTAINS the text about to be
-written, and denies the write otherwise with an `agent_message` the model acts
-on (re-verify with the exact code, then re-issue the write byte-for-byte).
+Nothing is written until an Acutis verify_code ALLOW exists, and the written
+text must be exactly what Acutis verified. This hook is a GATE, not a verifier:
+it never calls verify_code itself, because only the model can author the PCST
+contract. It checks that the model already obtained an ALLOW whose `code`
+payload CONTAINS the text about to be written, and denies otherwise with an
+`agent_message` the model acts on.
 
-Match rule (one-directional): normalize both sides with `"".join(text.split())`;
+Match rule (one-directional): both sides are normalized by removing whitespace;
 the normalized written text must be a substring of a normalized ALLOWed
 payload. A whole-file write with only one function verified is denied; a
 fragment edit inside a verified function is allowed; empty written text on a
 security-relevant path is denied.
 
-ALLOW ledger: /tmp/acutis-allow-cursor-<conversation_id>.json, shape
-{"allowed": ["<normalized code>", ...]}, written by
-verification-allow-tracker.py on every verify_code ALLOW (Cursor transcripts
-exclude tool outputs and transcript_path can be null, so the ledger is the only
-durable record of what was verified).
+Attestation: on allow, a single whole-text write records its content hash in
+the conversation's sweep state, so the post-shell and stop sweeps do not
+re-flag a file this gate already approved.
+
+Sweep delivery: `afterShellExecution` has no output fields in Cursor's hooks
+docs, so the post-shell sweep parks its finding in the sweep state. This gate
+is the first event that can talk to the agent, so it surfaces that finding as a
+deny (once, then clears it) before checking the write itself.
 
 Availability: only when nothing matches, GET https://mcp.acutis.dev/health
 (3 s). If the server is unreachable the write is allowed with a stderr note,
-the same fail-open policy as the stop hook. Never on the happy path.
+the same fail-open policy as the sweeps. Never on the happy path.
 
-Failure policy: Cursor documents `failClosed` only for beforeShellExecution,
-beforeMCPExecution and beforeReadFile (not preToolUse), so this script is
-fail-closed on its own: unparseable input or an internal error on a
-security-relevant path denies (exit code 2 also denies per the hooks docs).
+Failure policy: fail closed. Unparseable input or an internal error on a
+security-relevant path denies (exit code 2 also denies per the hooks docs), and
+the hook entry carries `failClosed: true`.
 """
 
 import json
-import re
+import os
 import sys
-import urllib.request
-from pathlib import Path
 
-# Keep in sync with after-file-edit.py / post-tool-use.py / stop-hook.py.
-# HTML is deliberately ABSENT: VerificationRequest.language rejects it.
-SECURITY_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx",
-    ".mjs", ".cjs",
-}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-SKIP_PATTERNS = {
-    "node_modules", "__pycache__", ".git", "venv", ".venv",
-    "package-lock.json", "yarn.lock", "poetry.lock",
-}
+import acutis_common as ac  # noqa: E402
 
-# Claude Code scratchpad directories are session-local working files, never
-# code that enters a codebase.
-_SCRATCHPAD_RE = re.compile(r"^/(?:private/)?tmp/claude-[^/]*/(?:.*/)?scratchpad/")
-
-# The conversation id becomes part of a filename: charset-validated first
-# (guard-and-reject). Anything else falls back to the fixed literal path in
-# ledger_path_for (keep that literal in sync with verification-allow-tracker.py).
-_CONVERSATION_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
-LEDGER_PREFIX = "/tmp/acutis-allow-cursor-"
-
-# Hosted Acutis MCP health endpoint. Hardcoded (not env- or input-derived) so
-# the health check carries no user-controlled URL.
-MCP_HEALTH_URL = "https://mcp.acutis.dev/health"
-MCP_HEALTH_TIMEOUT = 3  # seconds
-
-# Cursor's file-writing tool is named "Write" in preToolUse (docs + forum
-# thread 165962). Anything else reaching this script means the matcher did not
-# filter; pass it through rather than gate a Read.
+# Cursor's file-writing tool is named "Write" in preToolUse. Anything else
+# reaching this script means the matcher did not filter; pass it through.
 WRITE_TOOL_NAME = "Write"
+ATTEST_CAP = 200
 
-# Write tool_input keys. Cursor documents `file_path` + `content` for a whole
-# file write (forum thread 165962); the search/replace shape is undocumented,
-# so every plausible new-text carrier is inspected and an unrecognised shape
-# on a security-relevant path is denied (and its keys logged so the shape can
-# be learned).
+DENY_HEAD = "Acutis: "
+DENY_TAIL = (
+    " has no verify_code ALLOW for this exact text. Verify this code with a "
+    "PCST contract, then re-issue the write with the verified text "
+    "byte-for-byte."
+)
+
+# Cursor documents `file_path` + `content` for a whole-file write; the
+# search/replace shape is undocumented, so every plausible carrier is inspected
+# and an unrecognised shape on a security-relevant path is denied (its keys are
+# logged so the shape can be learned).
 _PATH_KEYS = (
     "file_path", "path", "filePath", "target_file", "targetFile",
     "relative_workspace_path",
@@ -85,52 +67,8 @@ _TEXT_KEYS = (
 )
 _LIST_KEYS = ("edits", "replacements")
 
-DENY_REASON_HEAD = "Acutis: no verify_code ALLOW covers this exact text for "
-DENY_REASON_TAIL = (
-    ". Call mcp__acutis__verify_code with this exact code and a PCST contract "
-    "(sources, sinks, transforms); on ALLOW, re-issue the write with the "
-    "verified text byte-for-byte. Acutis verifies generated code output, "
-    "never a file."
-)
 
-
-def normalize(text) -> str:
-    return "".join(str(text).split())
-
-
-def validated_conversation_id(cid: str) -> str:
-    """Guard-and-reject: only a charset-clean id may become part of a path."""
-    if not _CONVERSATION_ID_RE.fullmatch(cid):
-        return ""
-    return cid
-
-
-def ledger_path_for(hook_input: dict) -> str:
-    """Conversation-scoped ledger path; the fixed literal path when the id is
-    absent or fails validation (a shared fallback still requires an exact
-    text match, so it over-blocks rather than under-blocks)."""
-    cid = validated_conversation_id(str(hook_input.get("conversation_id") or ""))
-    if not cid:
-        return "/tmp/acutis-allow-cursor.json"
-    return LEDGER_PREFIX + cid + ".json"
-
-
-def load_allowed(hook_input: dict) -> list:
-    """Normalized ALLOWed payloads for this conversation ([] when absent/corrupt)."""
-    try:
-        with open(ledger_path_for(hook_input), encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    allowed = data.get("allowed", [])
-    if not isinstance(allowed, list):
-        return []
-    return [a for a in allowed if isinstance(a, str) and a]
-
-
-def parse_tool_input(hook_input: dict) -> dict:
+def parse_tool_input(hook_input):
     tool_input = hook_input.get("tool_input", {})
     if isinstance(tool_input, str):
         try:
@@ -142,33 +80,19 @@ def parse_tool_input(hook_input: dict) -> dict:
     return tool_input
 
 
-def extract_file_path(tool_input: dict, cwd: str) -> str:
+def extract_file_path(tool_input, cwd):
     for key in _PATH_KEYS:
         val = tool_input.get(key)
         if isinstance(val, str) and val:
-            p = Path(val)
-            if cwd and not p.is_absolute():
-                p = Path(cwd) / p
-            return str(p)
+            if cwd and not os.path.isabs(val):
+                return os.path.join(cwd, val)
+            return val
     return ""
 
 
-def is_security_relevant(file_path: str) -> bool:
-    if not file_path:
-        return False
-    p = Path(file_path)
-    if p.suffix.lower() not in SECURITY_EXTENSIONS:
-        return False
-    if set(p.parts) & SKIP_PATTERNS:
-        return False
-    if _SCRATCHPAD_RE.match(file_path):
-        return False
-    return True
-
-
-def extract_written_texts(tool_input: dict) -> tuple:
-    """Return (texts, found): every string that looks like new text, and
-    whether any new-text field was present at all."""
+def extract_written_texts(tool_input):
+    """(texts, found): every string that looks like new text, and whether any
+    new-text field was present at all."""
     texts = []
     found = False
     for key in _TEXT_KEYS:
@@ -183,15 +107,15 @@ def extract_written_texts(tool_input: dict) -> tuple:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            for tkey in _TEXT_KEYS:
-                val = item.get(tkey)
+            for text_key in _TEXT_KEYS:
+                val = item.get(text_key)
                 if isinstance(val, str):
                     found = True
                     texts.append(val)
     return texts, found
 
 
-def covered(norms: list, allowed: list) -> bool:
+def covered(norms, allowed):
     """One-directional: every normalized fragment is a substring of some
     normalized ALLOWed payload."""
     for norm in norms:
@@ -202,84 +126,106 @@ def covered(norms: list, allowed: list) -> bool:
     return True
 
 
-def acutis_reachable() -> bool:
-    try:
-        with urllib.request.urlopen(MCP_HEALTH_URL, timeout=MCP_HEALTH_TIMEOUT):
-            return True
-    except (OSError, ValueError):
-        return False
+def attest(hook_input, file_path, norms):
+    """Record the exact text this gate approved so the sweeps do not re-flag it.
+
+    Only a single whole-text write is attested: a multi-fragment edit leaves a
+    file whose final text is not any one of the fragments, and claiming
+    otherwise would under-report.
+    """
+    if len(norms) != 1:
+        return
+    target = ac.validated_abs_path(file_path)
+    if not target:
+        return
+    state = ac.load_sweep_state(hook_input)
+    attested = state["attested"]
+    attested[target] = ac.content_hash(norms[0])
+    state["attested"] = dict(list(attested.items())[-ATTEST_CAP:])
+    ac.save_sweep_state(hook_input, state)
 
 
-def emit(payload: dict) -> None:
-    json.dump(payload, sys.stdout)
-    sys.stdout.write("\n")
+def still_pending(hook_input, state):
+    """Parked sweep findings whose file is still uncovered right now."""
+    allowed = ac.load_allowed(hook_input)
+    remaining = []
+    for path in state["pending"]:
+        target = ac.validated_abs_path(path)
+        if not target:
+            continue
+        if ac.file_covered(target, allowed, state["attested"]):
+            continue
+        remaining.append(target)
+    return remaining
 
 
-def allow() -> int:
-    emit({"permission": "allow"})
+def allow():
+    ac.emit({"permission": "allow"})
     return 0
 
 
-def deny(name: str, note: str) -> int:
-    reason = DENY_REASON_HEAD + name + DENY_REASON_TAIL + note
-    emit({
+def deny(name):
+    ac.emit({
         "permission": "deny",
         "user_message": "Acutis: write to " + name + " blocked until a verify_code ALLOW covers the exact text.",
-        "agent_message": reason,
+        "agent_message": DENY_HEAD + name + DENY_TAIL,
     })
     return 0
 
 
-def main() -> int:
-    try:
-        raw = sys.stdin.read()
-        hook_input = json.loads(raw) if raw.strip() else {}
-    except (OSError, ValueError):
-        hook_input = None
-    if not isinstance(hook_input, dict):
-        print("acutis pre-write gate: unparseable hook input; denying (fail closed)", file=sys.stderr)
-        emit({
+def main():
+    hook_input = ac.read_hook_input()
+    if hook_input is None:
+        ac.note("pre-write gate: unparseable hook input; denying (fail closed)")
+        ac.emit({
             "permission": "deny",
-            "user_message": "Acutis: pre-write gate could not read the hook input.",
+            "user_message": "Acutis: the pre-write gate could not read the hook input.",
             "agent_message": "Acutis: the pre-write gate could not parse its hook input, so the write was denied (fail closed). Retry the write.",
         })
         return 0
-
-    tool_name = str(hook_input.get("tool_name") or "")
+    tool_name = ac.one_line(str(hook_input.get("tool_name") or ""))
     if tool_name and tool_name != WRITE_TOOL_NAME:
-        print("acutis pre-write gate: tool_name " + tool_name + " is not Write; passing through", file=sys.stderr)
+        ac.note("pre-write gate: tool_name " + tool_name + " is not Write; passing through")
         return allow()
-
+    ac.ensure_session_start(hook_input)
     tool_input = parse_tool_input(hook_input)
     cwd = str(hook_input.get("cwd") or "")
     file_path = extract_file_path(tool_input, cwd)
-    if not is_security_relevant(file_path):
+    if not ac.is_security_relevant(file_path):
         return allow()
-
-    name = Path(file_path).name
+    name = ac.one_line(os.path.basename(file_path))
+    state = ac.load_sweep_state(hook_input)
+    pending = still_pending(hook_input, state)
+    if pending:
+        state["pending"] = []
+        ac.save_sweep_state(hook_input, state)
+        message = ac.one_line(ac.sweep_message(pending))
+        ac.emit({
+            "permission": "deny",
+            "user_message": "Acutis: unverified code changed by a shell command is still on disk.",
+            "agent_message": message,
+        })
+        return 0
     texts, found = extract_written_texts(tool_input)
     if not found:
-        keys = ", ".join(sorted(str(k) for k in tool_input.keys()))
-        print("acutis pre-write gate: no new-text field in Write tool_input for " + name + "; keys=[" + keys + "]", file=sys.stderr)
-        return deny(name, " (Unrecognised Write input shape: keys [" + keys + "]; no new-text field found.)")
-
-    norms = [normalize(t) for t in texts]
+        keys = ac.one_line(", ".join(sorted(str(k) for k in tool_input.keys())))
+        ac.note("pre-write gate: no new-text field in Write tool_input for " + name + "; keys=[" + keys + "]")
+        return deny(name)
+    norms = [ac.normalize(text) for text in texts]
     if not all(norms):
-        return deny(name, " (The written text is empty.)")
-
-    if covered(norms, load_allowed(hook_input)):
+        return deny(name)
+    if covered(norms, ac.load_allowed(hook_input)):
+        attest(hook_input, file_path, norms)
         return allow()
-
-    if not acutis_reachable():
-        print("acutis pre-write gate: mcp.acutis.dev unreachable; allowing unverified write to " + name, file=sys.stderr)
+    if not ac.acutis_reachable():
+        ac.note("pre-write gate: mcp.acutis.dev unreachable; allowing unverified write to " + name)
         return allow()
-
-    return deny(name, "")
+    return deny(name)
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:  # noqa: BLE001 - fail closed on any internal error
-        print("acutis pre-write gate: internal error " + repr(exc) + "; denying (fail closed)", file=sys.stderr)
+        print("acutis pre-write gate: internal error " + ac.one_line(repr(exc)) + "; denying (fail closed)", file=sys.stderr)
         sys.exit(2)

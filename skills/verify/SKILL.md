@@ -5,7 +5,9 @@ description: Verify AI-generated code with Acutis PCST contracts. Use before sho
 
 # Security Verification with Acutis
 
-Call the Acutis `verify_code` MCP tool with your proposed code output and a PCST contract **before showing the code in chat or writing it to a file**. The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The PostToolUse hook fires after a write as a fallback nudge, but the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
+The core loop lives in the always-on rule `rules/acutis-security.mdc`, which is in context on every turn: verify the exact text with a PCST contract, enumerate every call site, classify each name once, use only the listed categories, write only text that got `ALLOW`. This skill is the reference layer behind that rule: examples, multi-argument sinks, arg roles, policy attributes, and BLOCK troubleshooting.
+
+The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The pre-write gate denies any write to a code file no `ALLOW` covers, and the shell gate denies shell commands that write code files, so the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
 
 ## Languages and Verification Units
 
@@ -14,34 +16,11 @@ Call the Acutis `verify_code` MCP tool with your proposed code output and a PCST
 - Verify the real diff even when an edit is type-only (interfaces, type aliases, annotations, `as` casts). Declarations-only code has no call sites, so an honest minimal contract reaches ALLOW immediately. Never verify a fabricated "representative" snippet in place of the code you actually wrote; a verdict attached to invented code is worse than no verdict.
 - The unit of verification is the code you are about to emit this turn. For a multi-fragment change-set, concatenate the fragments (blank line between them) into one submission. For merge or rebase conflict resolutions, verify the newly authored lines plus enough surrounding code to keep each source-to-transform-to-sink flow visible, not the whole pre-existing file.
 
-## Workflow
+## Workflow and Contract Shape
 
-1. Identify user-controlled sources: request parameters, body fields, route params, CLI args, environment values, uploaded file names, external JSON, or function parameters representing user input.
-2. Identify every security boundary reached by that data: HTML, SQL, shell command, file path, outbound URL, network transmission, eval/deserialization, redirect, header, log, LDAP/XPath/NoSQL, CSV cell, dynamic import, reflection, signed-payload use, format-string template, template renderer, XML DOM builder, or argv exec.
-3. Mentally trace a witness path for each risky flow: `source -> transform(s) -> sink`. Use this trace to build the contract.
-4. Declare all source functions/variables in `sources`.
-5. Declare dangerous boundaries in `sinks` with the correct `category`.
-6. Declare only actual sanitizer/helper function calls in `transforms`.
-7. Add non-security pass-through calls as `SafeOutput` sinks when the verifier asks for missing coverage.
-8. Omit `witnesses`. Acutis auto-infers them from the code and contract. If witness inference fails, fix the contract or reshape the code path; do not invent manual witness IDs.
+Both live in the always-on rule (`rules/acutis-security.mdc`): the eight rules that make the first call ALLOW, the contract shape, and the complete list of valid sink categories. Do not restate them here; read the rule.
 
-## PCST Contract Shape
-
-Use the minimal shape:
-
-```json
-{
-  "sources": ["request.args.get"],
-  "sinks": [
-    { "name": "render_html", "category": "HTMLOutput" }
-  ],
-  "transforms": [
-    { "name": "escape_html", "effect": "EscapesHTML" }
-  ]
-}
-```
-
-The verifier accepts `transforms` as shorthand for `transformations`, and `effect` as shorthand for `transformation_effect`.
+Two shorthands the rule leaves out: the verifier accepts `transforms` for `transformations`, and `effect` for `transformation_effect`.
 
 ## Witness-Path Reasoning
 
@@ -346,9 +325,9 @@ The contract is good enough to prove a vulnerability. Fix the code, then verify 
 
 ## Key Principles
 
-1. **Think in witness paths, but omit `witnesses`** — Acutis auto-infers them.
-2. **Transforms are function calls only** — allowlists, set checks, and if-guards are not transforms unless wrapped in a helper call.
-3. **SafeOutput is for non-interpreting boundaries** — logging, JSON serialization, response senders, and pass-through wrappers may be SafeOutput when they do not interpret the value.
-4. **Wrapper pattern** — the inner function that builds/interprets HTML, SQL, command strings, paths, URLs, code, etc. is the real sink. The outer function that just forwards the result is usually SafeOutput.
-5. **Keep contracts honest** — never mark a dangerous interpreter as SafeOutput just to get `ALLOW`.
-6. **Verify until ALLOW** — `BLOCK_INCOMPLETE` means fix the contract or code shape; `BLOCK_VIOLATION` means fix the code.
+The rule already covers omitting witnesses, iterating until ALLOW, and never weakening a category. What it does not cover:
+
+1. **Transforms are function calls only** — allowlists, set checks, and if-guards are not transforms unless wrapped in a helper call.
+2. **SafeOutput is for non-interpreting boundaries** — logging, JSON serialization, response senders, and pass-through wrappers may be SafeOutput when they do not interpret the value.
+3. **Wrapper pattern** — the inner function that builds/interprets HTML, SQL, command strings, paths, URLs, code, etc. is the real sink. The outer function that just forwards the result is usually SafeOutput.
+4. **Loop-carried locals re-widen** — a path or payload validated inside a `for` body may still read as tainted at a sink in that body. Validate the collection or the root before the loop, and re-validate inside any helper the loop calls.

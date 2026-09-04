@@ -71,18 +71,19 @@ Acutis uses a remote MCP server with OAuth. After installing:
 | Component | What it does |
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger and clear pending state. `sessionStart` primes the agent. `afterFileEdit` records security-relevant writes and `stop` re-prompts until written code is verified (backstop). |
-| **Skill** (`verification`) | Teaches the agent how to build PCST contracts, reason through witness paths, and iterate on BLOCK results. |
-| **Rule** (`acutis-security`) | Always-on rule that enforces verification-before-finish for security-relevant files. |
+| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `beforeShellExecution` is the shell gate: it denies shell commands that write code files, and snapshots the tree. `afterShellExecution` sweeps that snapshot for code files a command rewrote without an ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger. `sessionStart` primes the agent and marks the session start. `stop` is a silent filesystem sweep kept as a backstop. |
+| **Skill** (`verify`) | Reference layer: examples, arg roles, policy attributes, BLOCK troubleshooting. |
+| **Rule** (`acutis-security`) | Always-on rule carrying the core verification loop, so nothing needs configuring per project. |
 
 ### How enforcement works in Cursor
 
 Nothing is written until an Acutis ALLOW exists, and the written code is exactly
-what Acutis verified. The plugin ships two layers.
+what Acutis verified. Enforcement is per event, before code lands: two gates
+decide, one sweep audits, and one backstop remains during validation.
 
 **Pre-write gate (`preToolUse`, matcher `Write`, plugin 1.4.0+, Cursor 2.4+).**
 `scripts/pre-tool-use.py` runs before Cursor's `Write` tool touches a
-security-relevant file (`.py .js .jsx .ts .tsx .mjs .cjs`; `node_modules`,
+security-relevant file (`.py .js .jsx .ts .tsx .mjs .cjs .java`; `node_modules`,
 virtualenvs, lockfiles and Claude scratchpad directories are skipped). The hook
 is a gate, not a verifier: it never calls `verify_code` itself, because only
 the model can author the PCST contract. It checks that the model already
@@ -101,31 +102,70 @@ be written:
   transcripts exclude tool outputs and `transcript_path` can be null, so the
   ledger is the only durable record of what was verified.
 - On deny, the hook returns `{"permission": "deny", "user_message": ...,
-  "agent_message": ...}`; the `agent_message` tells the agent to call
-  `verify_code` with the exact code and re-issue the write byte-for-byte.
-  (Cursor drops `updated_input.content` for `Write`, so denying is the only
-  supported way to keep unverified content off disk.)
+  "agent_message": ...}`. The `agent_message` is exactly:
+  `Acutis: <basename> has no verify_code ALLOW for this exact text. Verify this
+  code with a PCST contract, then re-issue the write with the verified text
+  byte-for-byte.` (Cursor drops `updated_input.content` for `Write`, so denying
+  is the only supported way to keep unverified content off disk.)
+- On allow, a single whole-text write records its content hash as an
+  attestation, so the sweeps never re-flag a file this gate approved.
 - Availability: only when nothing matches, the hook GETs
   `https://mcp.acutis.dev/health` (3 s). If the server is unreachable the write
-  is allowed with a stderr note (same fail-open policy as the stop hook).
+  is allowed with a stderr note (same fail-open policy as the sweeps).
 - The script is fail-closed on its own (unparseable input or an internal error
-  denies; exit code 2 also denies). `failClosed: true` is set on the hook entry
-  as well, although Cursor documents that option only for
-  `beforeShellExecution`, `beforeMCPExecution` and `beforeReadFile`.
+  denies; exit code 2 also denies), and `failClosed: true` is set on the hook
+  entry. Cursor documents `failClosed` as a per-script option for any hook
+  definition; the fail-open *default* is called out specifically for
+  `beforeShellExecution` / `beforeMCPExecution` and `beforeReadFile`.
 - Cursor documents `file_path` + `content` for a whole-file `Write`; the
   search/replace shape is undocumented, so the gate also inspects `new_string`,
   `newString`, `edits[]`, `replacements[]` and similar carriers. An unrecognised
   shape on a security-relevant path is denied and the input keys are logged to
   stderr so the shape can be learned.
 
-**Backstop (`afterFileEdit` + `stop`).** Cursor's `stop` hook cannot hard-block;
-it emits a `followup_message` that auto-submits a new turn (bounded by
-`loop_limit`). `afterFileEdit` records each security-relevant write in
-`/tmp/acutis-unverified-cursor-<conversation_id>.json`,
-`verification-allow-tracker` clears it when `verify_code` returns ALLOW, and
-`stop` re-prompts while anything remains unverified. The stop hook is
-path-only (it never matches content); it catches writes that reached disk
-because the gate failed open.
+**Shell gate (`beforeShellExecution`, `failClosed: true`).**
+`scripts/before-shell.py` denies any shell command that would write a code
+file, because the shell bypasses the pre-write gate. Shell commands themselves
+are never verified; only code that lands in the project matters. Denied shapes:
+a `>` / `>>` redirect, a heredoc, `tee`, in-place `sed -i` / `perl -pi`, a
+`cp` / `mv` / `install` destination, or `truncate` aimed at a code file. The
+command is split on `;`, `&&`, `||`, `|` and newlines, then tokenized with
+`shlex`; if any segment fails to tokenize, the raw command is denied when it
+carries both a code-path token and a redirect or heredoc operator (fail
+closed), and allowed otherwise. Only paths inside the workspace count. The deny
+`agent_message` is exactly: `Acutis: <basename> is a code file. Write code
+files with the Write tool so the Acutis gate can check them; the shell is for
+running things.`
+
+**Post-shell sweep (`afterShellExecution`).** This is the format-then-verify
+policy: a formatter or generator that rewrites a code file produces unverified
+text, and the model must verify that file's final text. The shell gate
+snapshots every security-relevant file (relative path, mtime, size, capped at
+20 000 files) in the same run that allows the command;
+`scripts/after-shell.py` rebuilds the listing, diffs it, deletes the snapshot,
+and checks each changed file against the ALLOW ledger and the gate's
+attestations.
+
+*Delivery channel.* Cursor's hooks reference documents **no output fields** for
+`afterShellExecution` (input schema only), so the sweep cannot talk to the
+agent directly. The finding is persisted in
+`/tmp/acutis-sweep-cursor-<conversation_id>.json` and echoed to the Hooks
+output channel on stderr. The next `preToolUse` on a code file surfaces it as a
+deny whose `agent_message` is exactly: `Acutis: <files> changed during that
+command without a verify_code ALLOW covering their new content. Verify each
+file's final text with verify_code now (format first, then verify), or revert
+the change.` The finding also clears itself: `verification-allow-tracker`
+drops it as soon as an ALLOW covers the file again. If the server is
+unreachable when a message is due, the finding is parked instead of reported.
+
+**Backstop (`stop`), reduced role, planned removal.** Cursor's `stop` hook
+cannot hard-block; it emits a `followup_message` that auto-submits a new turn
+(bounded by `loop_limit`). It no longer tracks pending writes by path and no
+longer carries enforcement: it is a **silent** filesystem sweep over files
+whose mtime is after the session start mark and whose content no ALLOW covers.
+With nothing uncovered it emits no output field at all. It is kept only as a
+backstop through a validation period and will be removed once the per-event
+gates have proven themselves.
 
 ## Update
 
@@ -168,21 +208,32 @@ acutis server, then **Connect** / **Login** again to refresh your OAuth token.
 connected (green dot), then reload Cursor. Open a **project** Agent chat (not
 Home-only chat).
 
-**Every write to a `.py`/`.ts` file is denied with "no verify_code ALLOW covers
-this exact text":** This is the pre-write gate working. Call `verify_code`
-with the exact code you are about to write (not a summary or a fragment
-smaller than the write), get ALLOW, then re-issue the write with the verified
-text byte-for-byte. If you verified the whole file and still get denied, the
-text drifted between the verification and the write.
+**Every write to a `.py`/`.ts`/`.java` file is denied with "has no verify_code
+ALLOW for this exact text":** This is the pre-write gate working. Call
+`verify_code` with the exact code you are about to write (not a summary or a
+fragment smaller than the write), get ALLOW, then re-issue the write with the
+verified text byte-for-byte. If you verified the whole file and still get
+denied, the text drifted between the verification and the write.
 
-**Gate denies with "Unrecognised Write input shape":** Cursor sent a `Write`
-payload without a recognised new-text field. The keys are printed to the hook's
-stderr (Cursor: Output panel, Hooks); please report them so the gate can learn
-the shape.
+**A shell command is denied with "is a code file":** This is the shell gate.
+The command would have written a code file through a redirect, heredoc, `tee`,
+in-place `sed`/`perl`, a `cp`/`mv`/`install` destination, or `truncate`. Use
+the Write tool for the file and keep the shell for running things. Running a
+formatter over code files is still allowed; the post-shell sweep will ask you
+to verify each rewritten file's final text.
+
+**A write is denied with "changed during that command without a verify_code
+ALLOW":** The post-shell sweep found code files a command rewrote. Verify each
+named file's final text with `verify_code` (format first, then verify), or
+revert the change. The finding clears itself on the next covering ALLOW.
+
+**Gate denies without naming a reason and the stderr says "Unrecognised Write
+input shape":** Cursor sent a `Write` payload without a recognised new-text
+field. The keys are printed to the hook's stderr (Cursor: Output panel, Hooks);
+please report them so the gate can learn the shape.
 
 **Gate allows with "mcp.acutis.dev unreachable" on stderr:** The server was
-down during a write; the gate failed open and the stop hook remains the
-backstop.
+down during a write; the gate failed open and the sweeps remain the backstop.
 
 **Hooks show "Config version must be a number":** Ensure `hooks/hooks.json` has
 `"version": 1` at the top level. Pull the latest version.

@@ -1,21 +1,24 @@
 ---
-description: Acutis security verification — automatically verify security-relevant code before completing
+description: Acutis security verification: verify code with verify_code before it enters the codebase
 alwaysApply: true
 ---
 
-When you write or edit files with security-relevant extensions (.py, .js, .jsx, .ts, .tsx, .mjs, .cjs), you MUST verify the code using the `verify_code` MCP tool before finishing.
+# Acutis verification core
 
-After each security-relevant write, you will receive a reminder from Acutis.
-Do NOT ignore it. The stop hook will block completion if unverified code exists.
-When the reminder appears, immediately use the Acutis verify skill (`skills/verify/SKILL.md`) to build the PCST contract and reason through the witness path before calling `verify_code`.
+Acutis verifies AI-generated code before it enters the codebase. Call the verify_code tool with the exact code you are about to write and a PCST contract, and write only text that received ALLOW. A pre-write gate denies any code-file write that lacks an ALLOW covering the exact text.
 
-Call `mcp__acutis__verify_code` with:
-- `code`: the source code as a string
-- `language`: "python", "javascript", "typescript", "tsx" (alias "typescriptreact"), or "java" (submit React/JSX as "tsx")
-- `contract`: a PCST contract declaring sources, sinks, and transforms
+Rules that make the first call ALLOW:
+1. Write code files (.py .js .jsx .ts .tsx .mjs .cjs .java) with the Write or Edit tools, never through shell redirection, heredocs, sed, or scripts. Bash is for running things. If a command (formatter, generator) rewrites a code file, verify that file's final text afterwards.
+2. Submit a parseable unit (whole function, class, or file), not an indented fragment. Use language python, javascript, typescript, tsx, or java.
+3. Identify sources (request params, body fields, route params, CLI args, env values, file names, external JSON) and declare them. Function parameters are user-controlled even when undeclared.
+4. Enumerate EVERY call site before the first call, named as the parser names them: dotted member chains as written without parentheses (db.select.where, res.status.json, new Hono().post); bare helpers and builders (eq, z.object) are calls; JSX attributes and spreads are call sites named by the attribute (value, onClick, key, className; {...props} is props); template tags are calls.
+5. Classify each name once: a boundary sink with its category, a transform with its effect (real sanitizer or validator calls only), or SafeOutput for everything else. With no declared sources every parsed call must be declared. A name is a sink OR a transform, never both. Never submit an empty or partial contract to discover the list.
+6. Valid categories, the only accepted names: HTMLOutput, SQLQuery, JSONOutput, URLSink, SafeOutput, CommandExecution, FileSystemPath, OutboundHTTPRequest, NetworkTransmission, CodeEvaluation, UnsafeDeserialization, HTTPRedirect, HTTPHeader, LogOutput, LDAPQuery, XPathQuery, NoSQLQuery, CSVCell, DynamicImport, Reflection, SignedPayloadUse, FormatString, TemplateRenderer, XMLDOMBuilder, ArgvExec.
+7. On BLOCK_INCOMPLETE declare every name in missing_coverage in one revision; on BLOCK_VIOLATION fix the code, never weaken a category. Omit witnesses.
+8. Write the verified text byte-for-byte; verify the final version, not a draft.
 
-Always verify the real diff you wrote, submitted in the language it is written in. Type-only TypeScript edits (interfaces, type aliases, annotations) still verify honestly: declarations-only code has no call sites and reaches ALLOW with a minimal contract. Never fabricate a substitute snippet to satisfy the verification.
+Contract shape: {"sources": ["request.args.get"], "sinks": [{"name": "render_html", "category": "HTMLOutput"}], "transforms": [{"name": "escape_html", "effect": "EscapesHTML"}]}
 
-If the result is BLOCK_VIOLATION, fix the code and verify again. If BLOCK_INCOMPLETE, use the verification skill's troubleshooting guidance: add missing semantic coverage, use SafeOutput only for non-interpreting helpers, and reshape hidden flows so Acutis can infer witnesses. Only proceed when the result is ALLOW.
+For examples, multi-argument sinks, arg roles, policy attributes, and BLOCK troubleshooting, load the verify skill (/acutis:verify) and its references.
 
-Do not weaken contracts to get ALLOW. Acutis verifies AI-generated code output, not whole files or repositories.
+In Cursor, write code files with the Write tool.

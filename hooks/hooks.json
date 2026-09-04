@@ -15,17 +15,20 @@
         "failClosed": true
       }
     ],
-    "afterFileEdit": [
+    "beforeShellExecution": [
       {
-        "command": "./scripts/after-file-edit.sh",
-        "timeout": 5
+        "command": "./scripts/before-shell.sh",
+        "timeout": 20,
+        "failClosed": true
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "./scripts/after-shell.sh",
+        "timeout": 20
       }
     ],
     "postToolUse": [
-      {
-        "command": "./scripts/post-tool-use.sh",
-        "timeout": 5
-      },
       {
         "command": "./scripts/verification-allow-tracker.sh",
         "timeout": 5
