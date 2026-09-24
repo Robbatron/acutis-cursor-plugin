@@ -2,4 +2,4 @@
 # (hook/, sh hook/build.sh). acutis-plugin's CI rebuilds that commit and fails
 # if any binary here differs; this repository's CI checks SHA256SUMS.
 repository=https://github.com/Robbatron/acutis-plugin
-commit=865b3b65bad98dec4af3b33c8e50f2b3f17ff981
+commit=16f2ac3168324f239e8a9b4f7aa291ae8942cc03
