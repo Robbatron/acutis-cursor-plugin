@@ -1,4 +1,5 @@
 # The binaries in this directory are built from this commit of acutis-plugin
-# (hook/, sh hook/build.sh). CI rebuilds them from it and fails on any difference.
+# (hook/, sh hook/build.sh). acutis-plugin's CI rebuilds that commit and fails
+# if any binary here differs; this repository's CI checks SHA256SUMS.
 repository=https://github.com/Robbatron/acutis-plugin
-commit=9c1494e2828bbf747bb62c8067f22a5036f32750
+commit=865b3b65bad98dec4af3b33c8e50f2b3f17ff981

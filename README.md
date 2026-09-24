@@ -96,8 +96,9 @@ Windows batch file (it runs `hook.exe`) and a POSIX `sh` script (it runs the
 
 The binaries are built from the commit of
 [acutis-plugin](https://github.com/Robbatron/acutis-plugin) recorded in
-`scripts/HOOK_SOURCE`. The build is reproducible, and CI rebuilds them from that
-commit and fails if any committed binary differs.
+`scripts/HOOK_SOURCE`. The build is reproducible: acutis-plugin's CI rebuilds
+that commit and fails if any binary here differs, and this repository's CI
+checks them against `scripts/SHA256SUMS`.
 
 ### How enforcement works in Cursor
 
