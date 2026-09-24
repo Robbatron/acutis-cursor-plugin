@@ -5,21 +5,29 @@
     "email": "robbatron@users.noreply.github.com"
   },
   "metadata": {
-    "description": "Acutis — Formal verification for AI-generated code. Verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof."
+    "description": "Acutis formally verifies the security of code an AI generates, before it enters your codebase."
   },
   "plugins": [
     {
       "name": "acutis",
       "source": ".",
-      "description": "Formal verification for AI-generated code — verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.",
-      "version": "1.6.0",
+      "description": "Formally verifies the security of code an AI generates, and blocks unverified code before it enters your codebase.",
+      "version": "2.0.0",
       "author": {
         "name": "Robert Delfs"
       },
       "homepage": "https://acutis.dev",
       "repository": "https://github.com/Robbatron/acutis-cursor-plugin",
       "license": "MIT",
-      "keywords": ["security", "verification", "cwe-top-25", "xss", "sql-injection", "mcp", "zero-trust"],
+      "keywords": [
+        "security",
+        "verification",
+        "cwe",
+        "xss",
+        "sql-injection",
+        "mcp",
+        "ai-generated-code"
+      ],
       "category": "security"
     }
   ]

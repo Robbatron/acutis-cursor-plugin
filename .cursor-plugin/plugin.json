@@ -1,8 +1,8 @@
 {
   "name": "acutis",
   "displayName": "Acutis",
-  "version": "1.6.0",
-  "description": "Formal verification for AI-generated code \u2014 verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.",
+  "version": "2.0.0",
+  "description": "Formally verifies the security of code an AI generates, and blocks unverified code before it enters your codebase.",
   "author": {
     "name": "Robert Delfs"
   },
@@ -12,11 +12,11 @@
   "keywords": [
     "security",
     "verification",
-    "cwe-top-25",
+    "cwe",
     "xss",
     "sql-injection",
     "mcp",
-    "zero-trust"
+    "ai-generated-code"
   ],
   "rules": "rules/",
   "skills": "skills/"

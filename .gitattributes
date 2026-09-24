@@ -1,0 +1,7 @@
+# Prebuilt hook binaries: never diff or rewrite line endings.
+scripts/hook-* binary
+scripts/hook.exe binary
+# Launchers keep LF in every checkout; hook.cmd is read by both cmd and sh,
+# and LF keeps its sh heredoc delimiter intact.
+scripts/hook text eol=lf
+scripts/hook.cmd text eol=lf

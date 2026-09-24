@@ -1,0 +1,68 @@
+name: hooks
+
+# The hooks are the acutis-plugin binary. This workflow rebuilds it from the
+# commit pinned in scripts/HOOK_SOURCE and fails if any committed binary
+# differs, then runs the shipped launcher the way Cursor starts hooks on each
+# OS (PowerShell on Windows, a POSIX shell elsewhere).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  binaries-match-pinned-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned source commit
+        id: source
+        run: echo "commit=$(sed -n 's/^commit=//p' scripts/HOOK_SOURCE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: Robbatron/acutis-plugin
+          ref: ${{ steps.source.outputs.commit }}
+          path: source
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/hook/go.mod
+          cache: false
+      - name: Test the hook source
+        working-directory: source/hook
+        run: go test ./...
+      - name: Rebuild and compare
+        run: |
+          sh source/hook/build.sh
+          for f in hook hook.cmd hook-darwin-arm64 hook-darwin-amd64 hook-linux-amd64 hook-linux-arm64 hook.exe; do
+            cmp "source/scripts/$f" "scripts/$f" || { echo "scripts/$f differs from the pinned source"; exit 1; }
+          done
+
+  launcher-runs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell gate denies a code-file write (Windows, through PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = '{"conversation_id":"ci","command":"Set-Content -Path gen.py -Value x","cwd":""}' | ./scripts/hook.cmd cursor before-shell
+          Write-Output $out
+          if ($out -notmatch '"permission":"deny"') { exit 1 }
+      - name: Shell gate denies a code-file write (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          out=$(echo '{"conversation_id":"ci","command":"echo x > gen.py","cwd":""}' | sh -c './scripts/hook.cmd cursor before-shell')
+          echo "$out"
+          echo "$out" | grep -q '"permission":"deny"'
+      - name: Session start answers with the context field (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = '{"conversation_id":"ci"}' | ./scripts/hook.cmd cursor session-start
+          if ($out -notmatch 'additional_context') { exit 1 }
+      - name: Session start answers with the context field (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: echo '{"conversation_id":"ci"}' | sh -c './scripts/hook.cmd cursor session-start' | grep -q additional_context

@@ -3,47 +3,53 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "./scripts/session-start.sh",
+        "command": "./scripts/hook.cmd cursor session-start",
+        "timeout": 5
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "./scripts/hook.cmd cursor before-submit-prompt",
         "timeout": 5
       }
     ],
     "preToolUse": [
       {
-        "command": "./scripts/pre-tool-use.sh",
-        "matcher": "Write",
+        "command": "./scripts/hook.cmd cursor pre-write",
         "timeout": 20,
-        "failClosed": true
+        "failClosed": true,
+        "matcher": "Write"
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "./scripts/before-shell.sh",
+        "command": "./scripts/hook.cmd cursor before-shell",
         "timeout": 20,
         "failClosed": true
       }
     ],
     "afterShellExecution": [
       {
-        "command": "./scripts/after-shell.sh",
+        "command": "./scripts/hook.cmd cursor after-shell",
         "timeout": 20
       }
     ],
     "postToolUse": [
       {
-        "command": "./scripts/verification-allow-tracker.sh",
+        "command": "./scripts/hook.cmd cursor record-allow",
         "timeout": 5
       }
     ],
     "afterMCPExecution": [
       {
-        "command": "./scripts/verification-allow-tracker.sh",
+        "command": "./scripts/hook.cmd cursor record-allow",
         "timeout": 5
       }
     ],
     "stop": [
       {
-        "command": "./scripts/stop-hook.sh",
-        "timeout": 60,
+        "command": "./scripts/hook.cmd cursor stop",
+        "timeout": 30,
         "loop_limit": 10
       }
     ]

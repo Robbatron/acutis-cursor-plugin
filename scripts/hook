@@ -1,0 +1,29 @@
+#!/bin/sh
+# Acutis hook launcher for macOS and Linux: runs the prebuilt binary for this
+# OS and CPU. Usage: hook <claude|codex> <event>, with the event JSON on stdin.
+#
+# Windows never runs this file. A client that spawns scripts/hook there
+# resolves it to scripts/hook.exe, and the Codex hooks name hook.exe directly
+# through commandWindows. Under Git Bash or MSYS this script hands off to it.
+#
+# An unsupported platform exits 0 with a note: a missing hook must never brick
+# a write or a turn.
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  MINGW* | MSYS* | CYGWIN*) exec "$dir/hook.exe" "$@" ;;
+  *)
+    echo "acutis: no hook binary for $(uname -s)" >&2
+    exit 0
+    ;;
+esac
+case "$(uname -m)" in
+  arm64 | aarch64) arch=arm64 ;;
+  x86_64 | amd64) arch=amd64 ;;
+  *)
+    echo "acutis: no hook binary for $(uname -m)" >&2
+    exit 0
+    ;;
+esac
+exec "$dir/hook-$os-$arch" "$@"

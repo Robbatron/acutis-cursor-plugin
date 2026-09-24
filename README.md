@@ -1,6 +1,8 @@
-# Acutis — Cursor Plugin
+# Acutis Cursor Plugin
 
-Formal verification for AI-generated code. Verifies 22 CWE classes (7 of the CWE Top 25) with mathematical proof.
+Formally verifies the security of code an AI generates, before it enters your codebase. Acutis checks the code Cursor's agent writes, and the plugin's hooks hold back any code file whose exact text has not been verified.
+
+Runs on macOS, Linux and Windows with nothing else to install: the hooks are one prebuilt program per platform.
 
 This is the **Cursor-specific** plugin for Acutis. For Claude Code, see [acutis-plugin](https://github.com/Robbatron/acutis-plugin).
 
@@ -11,6 +13,12 @@ Clone the plugin into Cursor's local plugin directory:
 ```bash
 git clone https://github.com/Robbatron/acutis-cursor-plugin.git \
   ~/.cursor/plugins/local/acutis
+```
+
+On Windows (PowerShell):
+
+```powershell
+git clone https://github.com/Robbatron/acutis-cursor-plugin.git "$env:USERPROFILE\.cursor\plugins\local\acutis"
 ```
 
 Then run **Developer: Reload Window** in Cursor. Cursor auto-discovers the MCP
@@ -48,9 +56,8 @@ in the browser, and Cursor stores access/refresh tokens locally. You never put
 `CLIENT_SECRET` in the plugin — that stays on the Acutis server.
 
 **Why not URL-only?** Some MCP providers (Linear, Granola) work with just a
-`url` and OAuth discovery. Acutis uses a FastMCP OAuth proxy in front of AWS
-Cognito; Cursor's Plugin MCP path needs an explicit `CLIENT_ID` for Connect to
-complete reliably.
+`url` and OAuth discovery. Cursor's Plugin MCP path needs an explicit
+`CLIENT_ID` for Connect to complete reliably with the Acutis sign-in.
 
 **Home vs Plugin MCP:** If you also have an `acutis` entry under **Home MCP
 Servers** in Settings (e.g. local stdio from `~/.cursor/mcp.json`), that is
@@ -71,9 +78,26 @@ Acutis uses a remote MCP server with OAuth. After installing:
 | Component | What it does |
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `beforeShellExecution` is the shell gate: it denies shell commands that write code files, and snapshots the tree. `afterShellExecution` sweeps that snapshot for code files a command rewrote without an ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger. `sessionStart` primes the agent and marks the session start. `stop` is a silent filesystem sweep kept as a backstop. |
+| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `beforeShellExecution` is the shell gate: it denies shell commands that write code files, and snapshots the tree. `afterShellExecution` sweeps that snapshot for code files a command rewrote without an ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger. `sessionStart` primes the agent and marks the session start; `beforeSubmitPrompt` marks the start of each turn (it never blocks a prompt). `stop` is a turn-scoped filesystem sweep kept as a backstop. |
 | **Skill** (`verify`) | Reference layer: examples, arg roles, policy attributes, BLOCK troubleshooting. |
 | **Rule** (`acutis-security`) | Always-on rule carrying the core verification loop, so nothing needs configuring per project. |
+
+### How the hooks run
+
+Every hook is the same small program the Acutis Claude Code and Codex plugin
+uses, built for each platform and committed here: `scripts/hook-darwin-arm64`,
+`scripts/hook-darwin-amd64`, `scripts/hook-linux-amd64`,
+`scripts/hook-linux-arm64` and `scripts/hook.exe` (Windows; Windows on ARM runs
+it under emulation). `hooks/hooks.json` calls `./scripts/hook.cmd cursor
+<event>`. On Windows, Cursor starts hook commands through PowerShell, which
+cannot run an extensionless script, so `hook.cmd` is one file that is both a
+Windows batch file (it runs `hook.exe`) and a POSIX `sh` script (it runs the
+`scripts/hook` launcher, which picks the binary for the machine).
+
+The binaries are built from the commit of
+[acutis-plugin](https://github.com/Robbatron/acutis-plugin) recorded in
+`scripts/HOOK_SOURCE`. The build is reproducible, and CI rebuilds them from that
+commit and fails if any committed binary differs.
 
 ### How enforcement works in Cursor
 
@@ -82,7 +106,7 @@ what Acutis verified. Enforcement is per event, before code lands: two gates
 decide, one sweep audits, and one backstop remains during validation.
 
 **Pre-write gate (`preToolUse`, matcher `Write`, plugin 1.4.0+, Cursor 2.4+).**
-`scripts/pre-tool-use.py` runs before Cursor's `Write` tool touches a
+`hook cursor pre-write` runs before Cursor's `Write` tool touches a
 security-relevant file (`.py .js .jsx .ts .tsx .mjs .cjs .java`; `node_modules`,
 virtualenvs, lockfiles and Claude scratchpad directories are skipped). The hook
 is a gate, not a verifier: it never calls `verify_code` itself, because only
@@ -101,8 +125,9 @@ be written:
   dedent that moves a call out of its guard is denied, because that is a
   different program; empty written text is denied.
 - Every ALLOW is recorded in the ALLOW ledger
-  `/tmp/acutis-allow-cursor-<conversation_id>.json` by
-  `scripts/verification-allow-tracker.py` (registered on `postToolUse` and
+  `acutis-allow-cursor-<conversation_id>.json` (in `/tmp` on macOS and Linux,
+  the user's temp directory on Windows) by `hook cursor record-allow`
+  (registered on `postToolUse` and
   `afterMCPExecution`), 200 most recent payloads, atomic writes. Cursor
   transcripts exclude tool outputs and `transcript_path` can be null, so the
   ledger is the only durable record of what was verified.
@@ -117,9 +142,8 @@ be written:
 - Availability: only when nothing matches, the hook GETs
   `https://mcp.acutis.dev/health` (3 s). If the server is unreachable the write
   is allowed with a stderr note (same fail-open policy as the sweeps).
-- The script is fail-closed on its own (unparseable input or an internal error
-  denies; exit code 2 also denies), and `failClosed: true` is set on the hook
-  entry. Cursor documents `failClosed` as a per-script option for any hook
+- The gate is fail-closed on its own (unparseable input or an internal error
+  denies), and `failClosed: true` is set on the hook entry. Cursor documents `failClosed` as a per-script option for any hook
   definition; the fail-open *default* is called out specifically for
   `beforeShellExecution` / `beforeMCPExecution` and `beforeReadFile`.
 - Cursor documents `file_path` + `content` for a whole-file `Write`; the
@@ -129,15 +153,18 @@ be written:
   stderr so the shape can be learned.
 
 **Shell gate (`beforeShellExecution`, `failClosed: true`).**
-`scripts/before-shell.py` denies any shell command that would write a code
+`hook cursor before-shell` denies any shell command that would write a code
 file, because the shell bypasses the pre-write gate. Shell commands themselves
 are never verified; only code that lands in the project matters. Denied shapes:
-a `>` / `>>` redirect, a heredoc, `tee`, in-place `sed -i` / `perl -pi`, a
-`cp` / `mv` / `install` destination, or `truncate` aimed at a code file. The
-command is split on `;`, `&&`, `||`, `|` and newlines, then tokenized with
-`shlex`; if any segment fails to tokenize, the raw command is denied when it
-carries both a code-path token and a redirect or heredoc operator (fail
-closed), and allowed otherwise. Only paths inside the workspace count. The deny
+a redirect (`>`, `>>`, `>|`, `&>`), a heredoc, `tee`, in-place `sed -i` /
+`perl -pi`, `dd of=`, `truncate`, the destination of `cp` / `mv` / `install` /
+`rsync` / `ln` (including copying a code file into a directory), the same
+behind `sudo`, `env` or a variable assignment, and on Windows the PowerShell
+cmdlets that write files (`Set-Content`, `Add-Content`, `Out-File`,
+`New-Item`, `Copy-Item`, `Move-Item` and their aliases). The command is
+tokenized with POSIX shell quoting (and PowerShell's on Windows); a command
+that cannot be tokenized is denied when it carries both a code-path token and
+a redirect or heredoc operator (fail closed), and allowed otherwise. Only paths inside the workspace count. The deny
 `agent_message` is exactly: `Acutis: <basename> is a code file. Write code
 files with the Write tool so the Acutis gate can check them; the shell is for
 running things.`
@@ -147,19 +174,19 @@ policy: a formatter or generator that rewrites a code file produces unverified
 text, and the model must verify that file's final text. The shell gate
 snapshots every security-relevant file (relative path, mtime, size, capped at
 20 000 files) in the same run that allows the command;
-`scripts/after-shell.py` rebuilds the listing, diffs it, deletes the snapshot,
+`hook cursor after-shell` rebuilds the listing, diffs it, deletes the snapshot,
 and checks each changed file against the ALLOW ledger and the gate's
 attestations.
 
 *Delivery channel.* Cursor's hooks reference documents **no output fields** for
 `afterShellExecution` (input schema only), so the sweep cannot talk to the
 agent directly. The finding is persisted in
-`/tmp/acutis-sweep-cursor-<conversation_id>.json` and echoed to the Hooks
+`acutis-sweep-cursor-<conversation_id>.json` and echoed to the Hooks
 output channel on stderr. The next `preToolUse` on a code file surfaces it as a
 deny whose `agent_message` is exactly: `Acutis: <files> changed during that
 command without a verify_code ALLOW covering their new content. Verify each
 file's final text with verify_code now (format first, then verify), or revert
-the change.` The finding also clears itself: `verification-allow-tracker`
+the change.` The finding also clears itself: the ALLOW recorder
 drops it as soon as an ALLOW covers the file again. If the server is
 unreachable when a message is due, the finding is parked instead of reported.
 
@@ -167,7 +194,10 @@ unreachable when a message is due, the finding is parked instead of reported.
 cannot hard-block; it emits a `followup_message` that auto-submits a new turn
 (bounded by `loop_limit`). It no longer tracks pending writes by path and no
 longer carries enforcement: it is a **silent** filesystem sweep over files
-whose mtime is after the session start mark and whose content no ALLOW covers.
+whose mtime is after the start of this turn (recorded by `beforeSubmitPrompt`;
+the session start when no turn was recorded) and whose content no ALLOW covers.
+Measuring from the turn keeps a conversation from being blamed for files
+another conversation, the editor or git changed earlier.
 With nothing uncovered it emits no output field at all. It is kept only as a
 backstop through a validation period and will be removed once the per-event
 gates have proven themselves.
@@ -239,6 +269,10 @@ please report them so the gate can learn the shape.
 
 **Gate allows with "mcp.acutis.dev unreachable" on stderr:** The server was
 down during a write; the gate failed open and the sweeps remain the backstop.
+
+**Hooks do nothing on Windows, or Windows asks which app to open a file
+with:** the clone predates 2.0.0, whose hooks go through `scripts/hook.cmd`.
+Pull the latest version and reload Cursor.
 
 **Hooks show "Config version must be a number":** Ensure `hooks/hooks.json` has
 `"version": 1` at the top level. Pull the latest version.
