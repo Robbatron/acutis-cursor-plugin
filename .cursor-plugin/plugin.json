@@ -1,7 +1,7 @@
 {
   "name": "acutis",
   "displayName": "Acutis",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Formally verifies the security of code an AI generates, and blocks unverified code before it enters your codebase.",
   "author": {
     "name": "Robert Delfs"

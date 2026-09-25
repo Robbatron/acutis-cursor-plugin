@@ -1,10 +1,7 @@
 {
   "mcpServers": {
     "acutis": {
-      "url": "https://mcp.acutis.dev/mcp",
-      "auth": {
-        "CLIENT_ID": "827ac1d9-ab64-4cdd-b4bd-1d435e07fb86"
-      }
+      "url": "https://mcp.acutis.dev/mcp"
     }
   }
 }

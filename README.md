@@ -33,10 +33,7 @@ The plugin ships a remote MCP entry in `mcp.json`:
 {
   "mcpServers": {
     "acutis": {
-      "url": "https://mcp.acutis.dev/mcp",
-      "auth": {
-        "CLIENT_ID": "827ac1d9-ab64-4cdd-b4bd-1d435e07fb86"
-      }
+      "url": "https://mcp.acutis.dev/mcp"
     }
   }
 }
@@ -49,15 +46,18 @@ diverges from what other pilots run.
 | Field | What it is |
 | --- | --- |
 | `url` | Hosted Acutis MCP endpoint (OAuth 2.1, streamable HTTP). |
-| `auth.CLIENT_ID` | **Public** OAuth application ID — same for every user. Not a secret. Tells Cursor which OAuth app to use on the **Plugin MCP Servers** row (Cursor's [static OAuth](https://cursor.com/docs/mcp) pattern, same as the official Slack plugin). |
 
-Each user still gets their **own** OAuth session: click **Connect** once, sign in
-in the browser, and Cursor stores access/refresh tokens locally. You never put
-`CLIENT_SECRET` in the plugin — that stays on the Acutis server.
+There is no client id to configure. When you click **Connect**, Cursor
+discovers the Acutis sign-in service (WorkOS AuthKit) from the endpoint and
+registers itself there, so each install gets its own registration. Each user
+gets their **own** OAuth session: click **Connect** once, sign in in the
+browser, and Cursor stores and refreshes the tokens locally. There is no
+client secret anywhere in the plugin.
 
-**Why not URL-only?** Some MCP providers (Linear, Granola) work with just a
-`url` and OAuth discovery. Cursor's Plugin MCP path needs an explicit
-`CLIENT_ID` for Connect to complete reliably with the Acutis sign-in.
+**Upgrading from an older clone:** earlier versions pinned a shared
+`auth.CLIENT_ID` in `mcp.json`. That id belonged to the retired sign-in service
+and no longer works. Pull the latest version (see [Update](#update)), reload
+Cursor, then **Logout** and **Connect** on the Plugin MCP row.
 
 **Home vs Plugin MCP:** If you also have an `acutis` entry under **Home MCP
 Servers** in Settings (e.g. local stdio from `~/.cursor/mcp.json`), that is
@@ -70,7 +70,9 @@ Acutis uses a remote MCP server with OAuth. After installing:
 
 1. Open **Cursor Settings → Tools**.
 2. Under **Plugin MCP Servers**, find **acutis** and click **Connect** / **Login**.
-3. Approve access in the browser window that opens.
+3. Sign in in the browser window that opens. Sign-in is invite-only and
+   requires MFA: accept your invitation email first, and set up an
+   authenticator app on your first sign-in.
 4. Confirm the green dot appears next to the acutis server.
 
 ## What You Get
@@ -230,8 +232,13 @@ Then reload Cursor.
 ## Troubleshooting
 
 **Plugin MCP shows "Needs authentication":** Under **Plugin MCP Servers** (not
-Home MCP), click **Connect**. Ensure `mcp.json` in the clone includes
-`auth.CLIENT_ID` (pull latest if missing).
+Home MCP), click **Connect**. If `mcp.json` in the clone still has an
+`auth.CLIENT_ID` block, pull the latest version: the pinned id no longer works.
+
+**Signed in, but tools answer "Access denied: this account is not an active
+member of an Acutis organization":** your account has no organization
+membership, or it was removed. Ask your organization's admin to invite you,
+then sign in again with the invited account.
 
 **MCP returns 403/401:** Go to Cursor Settings → Tools, click **Logout** on the
 acutis server, then **Connect** / **Login** again to refresh your OAuth token.
