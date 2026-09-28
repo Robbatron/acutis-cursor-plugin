@@ -5,6 +5,10 @@
       {
         "command": "./scripts/hook.cmd cursor session-start",
         "timeout": 5
+      },
+      {
+        "command": "./scripts/hook.cmd cursor flush-reports",
+        "timeout": 5
       }
     ],
     "beforeSubmitPrompt": [
@@ -51,6 +55,12 @@
         "command": "./scripts/hook.cmd cursor stop",
         "timeout": 30,
         "loop_limit": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "./scripts/hook.cmd cursor session-end",
+        "timeout": 15
       }
     ]
   }

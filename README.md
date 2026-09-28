@@ -27,13 +27,18 @@ no manual editing of your global `~/.cursor/mcp.json`.
 
 ## MCP configuration (`mcp.json`)
 
-The plugin ships a remote MCP entry in `mcp.json`:
+The Acutis MCP server is the plugin's own hook binary, started as a local
+command. It relays every request unchanged to the hosted server at
+`https://mcp.acutis.dev/mcp` and adds your access token:
 
 ```json
 {
   "mcpServers": {
     "acutis": {
-      "url": "https://mcp.acutis.dev/mcp"
+      "type": "stdio",
+      "command": "${CURSOR_PLUGIN_ROOT}/scripts/hook",
+      "args": ["cursor", "mcp"],
+      "cwd": "${CURSOR_PLUGIN_ROOT}"
     }
   }
 }
@@ -43,37 +48,33 @@ The plugin ships a remote MCP entry in `mcp.json`:
 [Update](#update)). Hand-editing `mcp.json` causes `git pull` conflicts and
 diverges from what other pilots run.
 
-| Field | What it is |
-| --- | --- |
-| `url` | Hosted Acutis MCP endpoint (OAuth 2.1, streamable HTTP). |
-
-There is no client id to configure. When you click **Connect**, Cursor
-discovers the Acutis sign-in service (WorkOS AuthKit) from the endpoint and
-registers itself there, so each install gets its own registration. Each user
-gets their **own** OAuth session: click **Connect** once, sign in in the
-browser, and Cursor stores and refreshes the tokens locally. There is no
-client secret anywhere in the plugin.
-
-**Upgrading from an older clone:** earlier versions pinned a shared
-`auth.CLIENT_ID` in `mcp.json`. That id belonged to the retired sign-in service
-and no longer works. Pull the latest version (see [Update](#update)), reload
-Cursor, then **Logout** and **Connect** on the Plugin MCP row.
+The binary owns the one Acutis sign-in on the machine, shared by Cursor,
+Claude Code, Codex and VS Code and by the hooks. There is no client id or
+secret to configure. At the end of each conversation the hooks send one
+enforcement report to your organization's Acutis console: code writes with
+the `verification_id` of the ALLOW that covered them, writes the gate held,
+and files left uncovered, with no code and no readable file paths.
 
 **Home vs Plugin MCP:** If you also have an `acutis` entry under **Home MCP
 Servers** in Settings (e.g. local stdio from `~/.cursor/mcp.json`), that is
 separate from this plugin row. For hosted verification, the **Plugin MCP
 Servers → acutis** row must show connected (green dot).
 
-## Post-Install: Authenticate
+## Post-Install: Sign in
 
-Acutis uses a remote MCP server with OAuth. After installing:
+After installing, reload Cursor and start a chat. While you are signed out,
+the Acutis server offers one tool, `sign_in`, and the session tells the agent
+so:
 
-1. Open **Cursor Settings → Tools**.
-2. Under **Plugin MCP Servers**, find **acutis** and click **Connect** / **Login**.
-3. Sign in in the browser window that opens. Sign-in is invite-only and
-   requires MFA: accept your invitation email first, and set up an
-   authenticator app on your first sign-in.
-4. Confirm the green dot appears next to the acutis server.
+1. Ask the agent to sign in to Acutis. It calls `sign_in`, which opens the
+   Acutis sign-in page in your browser.
+2. Sign in. Sign-in is invite-only and requires MFA: accept your invitation
+   email first, and set up an authenticator app on your first sign-in.
+3. The page confirms you are signed in; `verify_code` appears in the chat.
+
+From a terminal, `scripts/hook sign-in`, `scripts/hook status` and
+`scripts/hook sign-out` in the plugin directory do the same. If another
+client on this machine already signed in, there is nothing to do.
 
 ## What You Get
 
@@ -240,8 +241,9 @@ member of an Acutis organization":** your account has no organization
 membership, or it was removed. Ask your organization's admin to invite you,
 then sign in again with the invited account.
 
-**MCP returns 403/401:** Go to Cursor Settings → Tools, click **Logout** on the
-acutis server, then **Connect** / **Login** again to refresh your OAuth token.
+**Signed out, 401 or 403:** run `scripts/hook sign-out` in the plugin
+directory, then ask the agent to sign in to Acutis again (or run
+`scripts/hook sign-in`).
 
 **`git pull` blocked on `mcp.json`:** You edited the file locally. Run
 `git restore mcp.json` in the clone, then pull again — do not commit local
