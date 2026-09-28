@@ -1,6 +1,6 @@
 # Acutis Cursor Plugin
 
-Formally verifies the security of code an AI generates, before it enters your codebase. Acutis checks the code Cursor's agent writes, and the plugin's hooks hold back any code file whose exact text has not been verified.
+Formally verifies the security of code an AI generates, before it enters your codebase. Acutis checks the code Cursor's agent writes, and the plugin's hooks hold back any code change that has not been verified.
 
 Runs on macOS, Linux and Windows with nothing else to install: the hooks are one prebuilt program per platform.
 
@@ -137,9 +137,10 @@ be written:
   ledger is the only durable record of what was verified.
 - On deny, the hook returns `{"permission": "deny", "user_message": ...,
   "agent_message": ...}`. The `agent_message` is exactly:
-  `Acutis: <basename> has no verify_code ALLOW for this exact text. Verify this
-  code with a PCST contract, then re-issue the write with the verified text
-  byte-for-byte.` (Cursor drops `updated_input.content` for `Write`, so denying
+  `Acutis: <basename> has no verify_code ALLOW for this change. Verify the
+  whole function, method or top-level block this write changes, as it will
+  read afterwards (for a new file, the whole file), with a PCST contract, then
+  re-issue the write unchanged.` (Cursor drops `updated_input.content` for `Write`, so denying
   is the only supported way to keep unverified content off disk.)
 - On allow, a single whole-text write records its content hash as an
   attestation, so the sweeps never re-flag a file this gate approved.
@@ -254,11 +255,14 @@ connected (green dot), then reload Cursor. Open a **project** Agent chat (not
 Home-only chat).
 
 **Every write to a `.py`/`.ts`/`.java` file is denied with "has no verify_code
-ALLOW for this exact text":** This is the pre-write gate working. Call
-`verify_code` with the exact code you are about to write (not a summary or a
-fragment smaller than the write), get ALLOW, then re-issue the write with the
-verified text byte-for-byte. If you verified the whole file and still get
-denied, the text drifted between the verification and the write.
+ALLOW for this change":** This is the pre-write gate working. For a
+whole-content write or an exact replacement to an existing file, the gate
+rebuilds the file and needs an ALLOW for the whole function, method or
+top-level block each change sits in, as it will read afterwards; deleting
+lines counts as a change. For a new file it needs the whole file. Call
+`verify_code` on that text (not a summary or a smaller fragment), get ALLOW,
+then re-issue the write. If you verified it and still get denied, the text
+drifted between the verification and the write.
 
 **A shell command is denied with "is a code file":** This is the shell gate.
 The command would have written a code file through a redirect, heredoc, `tee`,
