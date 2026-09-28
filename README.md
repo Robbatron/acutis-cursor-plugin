@@ -81,7 +81,7 @@ client on this machine already signed in, there is nothing to do.
 | Component | What it does |
 | --- | --- |
 | **MCP Server** (`mcp.acutis.dev`) | `verify_code` tool — takes code, language, and a PCST contract → returns ALLOW or BLOCK with proof artifacts. |
-| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `beforeShellExecution` is the shell gate: it denies shell commands that write code files, and snapshots the tree. `afterShellExecution` sweeps that snapshot for code files a command rewrote without an ALLOW. `postToolUse` + `afterMCPExecution` record every `verify_code` ALLOW in the ALLOW ledger. `sessionStart` primes the agent and marks the session start; `beforeSubmitPrompt` marks the start of each turn (it never blocks a prompt). `stop` is a turn-scoped filesystem sweep kept as a backstop. |
+| **Hooks** | `preToolUse` (matcher `Write`) is the pre-write gate: it denies any write to a security-relevant file whose text is not covered by a prior `verify_code` ALLOW. `beforeShellExecution` is the shell gate: it denies shell commands that write code files, and snapshots the tree. `afterShellExecution` sweeps that snapshot for code files a command rewrote without an ALLOW. `beforeMCPExecution` and `afterMCPExecution` check what a third-party MCP tool call changed. `postToolUse` + `afterMCPExecution` record every `verify_code` verdict and each ALLOW in the ALLOW ledger. `sessionStart` primes the agent and marks the session start; `sessionEnd` sends the session's enforcement report. There is no `stop` hook. |
 | **Skill** (`verify`) | Reference layer: examples, arg roles, policy attributes, BLOCK troubleshooting. |
 | **Rule** (`acutis-security`) | Always-on rule carrying the core verification loop, so nothing needs configuring per project. |
 
@@ -107,7 +107,7 @@ checks them against `scripts/SHA256SUMS`.
 
 Nothing is written until an Acutis ALLOW exists, and the written code is exactly
 what Acutis verified. Enforcement is per event, before code lands: two gates
-decide, one sweep audits, and one backstop remains during validation.
+decide, and a check after each shell or MCP call audits what that one call changed. Each conversation answers only for its own calls, never for what else changed in the working tree.
 
 **Pre-write gate (`preToolUse`, matcher `Write`, plugin 1.4.0+, Cursor 2.4+).**
 `hook cursor pre-write` runs before Cursor's `Write` tool touches a
@@ -194,17 +194,7 @@ the change.` The finding also clears itself: the ALLOW recorder
 drops it as soon as an ALLOW covers the file again. If the server is
 unreachable when a message is due, the finding is parked instead of reported.
 
-**Backstop (`stop`), reduced role, planned removal.** Cursor's `stop` hook
-cannot hard-block; it emits a `followup_message` that auto-submits a new turn
-(bounded by `loop_limit`). It no longer tracks pending writes by path and no
-longer carries enforcement: it is a **silent** filesystem sweep over files
-whose mtime is after the start of this turn (recorded by `beforeSubmitPrompt`;
-the session start when no turn was recorded) and whose content no ALLOW covers.
-Measuring from the turn keeps a conversation from being blamed for files
-another conversation, the editor or git changed earlier.
-With nothing uncovered it emits no output field at all. It is kept only as a
-backstop through a validation period and will be removed once the per-event
-gates have proven themselves.
+**No `stop` hook.** The hook set follows Semgrep Guardian's: session start, the per-call hooks, and session end. Nothing speaks to the agent at the end of a turn. A code file that a conversation's own shell or MCP call left without an ALLOW is parked and surfaced at the next pre-write gate, and counted in the session's report until an ALLOW covers it. Code that a `git pull`, merge, rebase or checkout brought in is recorded as arrived through git, never parked.
 
 ## Update
 
