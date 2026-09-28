@@ -11,12 +11,6 @@
         "timeout": 5
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "./scripts/hook.cmd cursor before-submit-prompt",
-        "timeout": 5
-      }
-    ],
     "preToolUse": [
       {
         "command": "./scripts/hook.cmd cursor pre-write",
@@ -48,19 +42,22 @@
       {
         "command": "./scripts/hook.cmd cursor record-allow",
         "timeout": 5
-      }
-    ],
-    "stop": [
+      },
       {
-        "command": "./scripts/hook.cmd cursor stop",
-        "timeout": 30,
-        "loop_limit": 10
+        "command": "./scripts/hook.cmd cursor after-mcp",
+        "timeout": 20
       }
     ],
     "sessionEnd": [
       {
         "command": "./scripts/hook.cmd cursor session-end",
         "timeout": 15
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "./scripts/hook.cmd cursor before-mcp",
+        "timeout": 20
       }
     ]
   }
