@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Acutis verification core
 
-Acutis verifies AI-generated code before it enters the codebase. Call the verify_code tool with the exact code you are about to write and a PCST contract, and write only text that received ALLOW. A pre-write gate denies any code-file write that lacks an ALLOW covering the exact text.
+Acutis verifies AI-generated code before it enters the codebase. Call the verify_code tool with the exact code you are about to write and a PCST contract, and write only text that received ALLOW. A pre-write gate denies any code-file write unless an ALLOW covers what it changes: for an edit, the whole function, method or top-level block each change sits in, as it will read afterwards (deletions included); for a new file, the whole file.
 
 Rules that make the first call ALLOW:
 1. Write code files (.py .js .jsx .ts .tsx .mjs .cjs .java) with the Write or Edit tools, never through shell redirection, heredocs, sed, or scripts. Bash is for running things. If a command (formatter, generator) rewrites a code file, verify that file's final text afterwards.
@@ -15,7 +15,7 @@ Rules that make the first call ALLOW:
 5. Classify each name once: a boundary sink with its category, a transform with its effect (real sanitizer or validator calls only), or SafeOutput for everything else. With no declared sources every parsed call must be declared. A name is a sink OR a transform, never both. Never submit an empty or partial contract to discover the list.
 6. Valid categories, the only accepted names: HTMLOutput, SQLQuery, JSONOutput, URLSink, SafeOutput, CommandExecution, FileSystemPath, OutboundHTTPRequest, NetworkTransmission, CodeEvaluation, UnsafeDeserialization, HTTPRedirect, HTTPHeader, LogOutput, LDAPQuery, XPathQuery, NoSQLQuery, CSVCell, DynamicImport, Reflection, SignedPayloadUse, FormatString, TemplateRenderer, XMLDOMBuilder, ArgvExec.
 7. On BLOCK_INCOMPLETE declare every name in missing_coverage in one revision; on BLOCK_VIOLATION fix the code, never weaken a category. Omit witnesses.
-8. Write the verified text byte-for-byte; verify the final version, not a draft.
+8. Write the verified text byte-for-byte; verify the final version, not a draft. For an edit, verify the enclosing function or method as it will read after the edit; unchanged code elsewhere in the file needs no re-verification.
 
 Contract shape: {"sources": ["request.args.get"], "sinks": [{"name": "render_html", "category": "HTMLOutput"}], "transforms": [{"name": "escape_html", "effect": "EscapesHTML"}]}
 

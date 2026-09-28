@@ -5,7 +5,7 @@ description: Verify AI-generated code with Acutis PCST contracts. Use before sho
 
 # Security Verification with Acutis
 
-The core loop lives in the always-on rule `rules/acutis-security.mdc`, which is in context on every turn: verify the exact text with a PCST contract, enumerate every call site, classify each name once, use only the listed categories, write only text that got `ALLOW`. This skill is the reference layer behind that rule: examples, multi-argument sinks, arg roles, policy attributes, and BLOCK troubleshooting.
+The core loop lives in the always-on rule `rules/acutis-security.mdc`, which is in context on every turn: verify the code you change (the whole function or method, as it will read) with a PCST contract, enumerate every call site, classify each name once, use only the listed categories, write only text that got `ALLOW`. This skill is the reference layer behind that rule: examples, multi-argument sinks, arg roles, policy attributes, and BLOCK troubleshooting.
 
 The MCP server name contains "acutis" (e.g. `user-acutis` or `acutis`). Acutis verifies generated code, never a file. The pre-write gate denies any write to a code file no `ALLOW` covers, and the shell gate denies shell commands that write code files, so the canonical invocation point is *pre-write*. Continue until the decision is `ALLOW`.
 
