@@ -153,7 +153,7 @@ cursor.execute(build_query(safe_order))
 
 | Vulnerability | Sink category | Transform effects |
 | --- | --- | --- |
-| XSS / HTML injection | `HTMLOutput`, `JSONOutput`, `URLSink` | `EscapesHTML`, `ValidatesURLProtocol`, `EncodesURL`, `DecodesURL` |
+| XSS / HTML injection | `HTMLOutput`, `JSONOutput`, `URLSink` | `EscapesHTML`, `ValidatesURLProtocol`, `EncodesURLComponent`, `EncodesURL`, `DecodesURL` |
 | SQL injection | `SQLQuery` | `EscapesSQL`, `ParameterizesSQL` |
 | OS command injection | `CommandExecution` | `EscapesShell`, `ValidatesCommand` |
 | Path traversal | `FileSystemPath` | `NormalizesPath`, `ValidatesPath` |
@@ -174,6 +174,8 @@ cursor.execute(build_query(safe_order))
 | Server-side template injection (CWE-1336/94) | `TemplateRenderer` (arg-role-gated) | none; pass user input as `TemplateData` render context, never `TemplateSource` |
 | XML DOM / content injection (CWE-91) | `XMLDOMBuilder` (arg-role-gated) | none; declare user input as `Content` (text/attribute value), never `Structural` |
 | Argument injection (CWE-88) | `ArgvExec` (arg-role-gated) | none; keep user input in `Content` operand positions, never `Structural` option/subcommand slots |
+
+`EncodesURLComponent` is for component encoders that also encode `:` (`encodeURIComponent`, Python `quote(x, safe="")`). It clears the dangerous-scheme property, so `href={"/users/" + encodeURIComponent(id)}` into a `URLSink` can ALLOW. `EncodesURL` does not clear it, because `encodeURI` leaves `javascript:` intact. Acutis runs a declared encoder against `javascript:` payloads, so declaring `encodeURI` as `EncodesURLComponent` BLOCKs.
 
 ### Property-Preserving String Operations
 
@@ -212,6 +214,8 @@ Role pairs (danger role first, safe counterpart second):
 - `TemplateRenderer`: `TemplateSource` / `TemplateData`
 - `XMLDOMBuilder`: `Structural` / `Content`
 - `ArgvExec`: `Structural` / `Content` (per argv element)
+
+Every argument that is not declared with the safe role is checked, whether you declared it with the danger role or not at all, so declare each data position explicitly. `ArgvExec` indices count argv elements as the program receives them, with the program at index 0 in every language: `subprocess.run(["git", "clone", "--", url])` and `execFile("git", ["clone", "--", url])` both put `git` at 0 and `url` at 3, so declare `{"0": "Structural", "1": "Structural", "2": "Structural", "3": "Content"}`.
 
 These are absorbing on the danger role: no transform makes a user-controlled format template, template source, or structural position safe. The fix is always to move user input to the safe role (interpolate as a format arg, pass as render context, write as text content, keep as an operand). Tainted data in the safe role does not trip the constraint. Declare roles honestly; do not mark a template-source argument as `TemplateData` to force an ALLOW.
 
